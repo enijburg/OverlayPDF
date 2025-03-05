@@ -15,6 +15,8 @@ OverlayPDF is a .NET 9 application designed to overlay text PDFs with predefined
 - Apply different templates to the first page and continuation pages.
 - Configurable template paths via `appsettings.json`.
 
+![PDF Overlay Sample](assets/PDFOverlay_Sample.png)
+
 ## Installation
 
 1. Clone the repository
