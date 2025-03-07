@@ -3,15 +3,13 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Console;
 using OverlayPDF;
+using Troolean.OneTimeExecution;
 
 var builder = Host.CreateDefaultBuilder(args)
     .ConfigureLogging(logging =>
     {
         logging.ClearProviders();
-        logging.AddConsole(options =>
-        {
-            options.FormatterName = "custom";
-        });
+        logging.AddConsole(options => { options.FormatterName = "custom"; });
         logging.AddConsoleFormatter<CustomConsoleFormatter, ConsoleFormatterOptions>();
     })
     .ConfigureServices((_, services) =>
@@ -20,23 +18,9 @@ var builder = Host.CreateDefaultBuilder(args)
             .BindConfiguration(nameof(PdfOverlayOptions))
             .ValidateOnStart();
 
-        services.AddTransient<PdfOverlayService>();
+        services.AddOneTimeExecutionService<PdfOverlayService>();
     });
 
 using var host = builder.Build();
 
-using var serviceScope = host.Services.CreateScope();
-var services = serviceScope.ServiceProvider;
-
-try
-{
-    var overlayService = services.GetRequiredService<PdfOverlayService>();
-    overlayService.Execute(args[0] ?? "");
-}
-catch (Exception ex)
-{
-    Console.WriteLine($"An error occurred: {ex.Message}");
-    return 1;
-}
-
-return 0;
+await host.RunAsync();

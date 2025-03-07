@@ -4,38 +4,49 @@ using iText.Kernel.Pdf.Canvas;
 using iText.Layout;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Troolean.OneTimeExecution;
 using Path = System.IO.Path;
 
 namespace OverlayPDF;
 
 public class PdfOverlayService(ILogger<PdfOverlayService> logger, IOptions<PdfOverlayOptions> options)
+    : IOneTimeExecutionService
 {
     private readonly PdfOverlayOptions _overlayOptions = options.Value;
 
-    public void Execute(string filename)
+    public Task ExecuteAsync(CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(filename))
-        {
-            logger.LogError("No input file specified.");
-        }
+        // NOTE: Kept the asynchronous method signature for consistency.
+        // This implementation is synchronous because the iText library does not support asynchronous operations.
+
+        var args = Environment.GetCommandLineArgs();
+        // Use args[1] as the filename (adjust if needed)
+        var filename = args.Length > 1 ? args[1] : string.Empty;
+
+
+        if (string.IsNullOrWhiteSpace(filename)) logger.LogError("No input file specified.");
 
         if (!File.Exists(filename))
         {
             logger.LogError("The input file does not exist. {Filename}", filename);
-            return;
+            return Task.CompletedTask;
         }
 
         logger.LogInformation("Applying templates to: '{Filename}'", Path.GetFileName(filename));
 
-        var outputFilename = Path.Combine(Path.GetDirectoryName(filename)!, $"{Path.GetFileNameWithoutExtension(filename)}_overlay{Path.GetExtension(filename)}");
+        var outputFilename = Path.Combine(Path.GetDirectoryName(filename)!,
+            $"{Path.GetFileNameWithoutExtension(filename)}_overlay{Path.GetExtension(filename)}");
 
         var firstTemplatePath = Path.Combine(_overlayOptions.TemplateDirectory, _overlayOptions.FirstPageTemplate);
-        var continuationTemplatePath = Path.Combine(_overlayOptions.TemplateDirectory, _overlayOptions.ContinuationPageTemplate);
+        var continuationTemplatePath =
+            Path.Combine(_overlayOptions.TemplateDirectory, _overlayOptions.ContinuationPageTemplate);
 
         if (!File.Exists(firstTemplatePath) || !File.Exists(continuationTemplatePath))
         {
-            logger.LogError("The template files do not exist. First template: {FirstTemplatePath}, Continuation template: {ContinuationTemplatePath}", firstTemplatePath, continuationTemplatePath);
-            return;
+            logger.LogError(
+                "The template files do not exist. First template: {FirstTemplatePath}, Continuation template: {ContinuationTemplatePath}",
+                firstTemplatePath, continuationTemplatePath);
+            return Task.CompletedTask;
         }
 
         try
@@ -47,9 +58,12 @@ public class PdfOverlayService(ILogger<PdfOverlayService> logger, IOptions<PdfOv
         {
             logger.LogError(e, "An error occurred while applying the templates.");
         }
+
+        return Task.CompletedTask;
     }
 
-    private void MergePdfsWithTwoTemplates(string textPdfPath, string outputPdfPath, string firstTemplatePath, string continuationTemplatePath)
+    private void MergePdfsWithTwoTemplates(string textPdfPath, string outputPdfPath, string firstTemplatePath,
+        string continuationTemplatePath)
     {
         // Open the template PDFs and the text PDF.
         using var initialTemplateDoc = new PdfDocument(new PdfReader(firstTemplatePath));

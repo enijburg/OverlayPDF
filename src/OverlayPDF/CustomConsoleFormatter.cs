@@ -7,7 +7,8 @@ namespace OverlayPDF;
 
 public class CustomConsoleFormatter() : ConsoleFormatter("custom")
 {
-    public override void Write<TState>(in LogEntry<TState> logEntry, IExternalScopeProvider? scopeProvider, TextWriter textWriter)
+    public override void Write<TState>(in LogEntry<TState> logEntry, IExternalScopeProvider? scopeProvider,
+        TextWriter textWriter)
     {
         var logLevel = logEntry.LogLevel;
         var message = logEntry.Formatter(logEntry.State, logEntry.Exception);
@@ -29,7 +30,7 @@ public class CustomConsoleFormatter() : ConsoleFormatter("custom")
             LogLevel.Warning => "\e[33m", // Yellow
             LogLevel.Error => "\e[31m", // Red
             LogLevel.Critical => "\e[35m", // Magenta
-            _ => "\e[0m", // Reset
+            _ => "\e[0m" // Reset
         };
     }
 }
