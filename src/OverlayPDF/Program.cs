@@ -3,7 +3,6 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Console;
 using OverlayPDF;
-using Troolean.OneTimeExecution;
 
 var builder = Host.CreateDefaultBuilder(args)
     .ConfigureLogging(logging =>
@@ -18,7 +17,7 @@ var builder = Host.CreateDefaultBuilder(args)
             .BindConfiguration(nameof(PdfOverlayOptions))
             .ValidateOnStart();
 
-        services.AddOneTimeExecutionService<PdfOverlayService>();
+        services.AddHostedService<PdfOverlayService>();
     });
 
 using var host = builder.Build();

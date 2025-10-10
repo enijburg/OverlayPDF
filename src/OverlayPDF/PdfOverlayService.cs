@@ -2,19 +2,19 @@
 using iText.Kernel.Pdf;
 using iText.Kernel.Pdf.Canvas;
 using iText.Layout;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using Troolean.OneTimeExecution;
 using Path = System.IO.Path;
 
 namespace OverlayPDF;
 
-public class PdfOverlayService(ILogger<PdfOverlayService> logger, IOptions<PdfOverlayOptions> options)
-    : IOneTimeExecutionService
+public class PdfOverlayService(ILogger<PdfOverlayService> logger, IOptions<PdfOverlayOptions> options,
+    IHostApplicationLifetime hostApplicationLifetime) : BackgroundService
 {
     private readonly PdfOverlayOptions _overlayOptions = options.Value;
 
-    public Task ExecuteAsync(CancellationToken cancellationToken)
+    protected override Task ExecuteAsync(CancellationToken stoppingToken)
     {
         // NOTE: Kept the asynchronous method signature for consistency.
         // This implementation is synchronous because the iText library does not support asynchronous operations.
@@ -43,11 +43,18 @@ public class PdfOverlayService(ILogger<PdfOverlayService> logger, IOptions<PdfOv
 
         if (!File.Exists(firstTemplatePath) || !File.Exists(continuationTemplatePath))
         {
-            logger.LogError(
-                "The template files do not exist. First template: {FirstTemplatePath}, Continuation template: {ContinuationTemplatePath}",
-                firstTemplatePath, continuationTemplatePath);
+            logger.LogError("""
+                            The template files do not exist. First template: {FirstTemplatePath},
+                            Continuation template: {ContinuationTemplatePath}",
+                            """, firstTemplatePath, continuationTemplatePath);
             return Task.CompletedTask;
         }
+
+        // Log the templates that will be applied
+        logger.LogInformation("""
+                              Using templates. First page: {FirstTemplatePath},
+                              Continuation pages: {ContinuationTemplatePath}",
+                              """, firstTemplatePath, continuationTemplatePath);
 
         try
         {
@@ -58,6 +65,8 @@ public class PdfOverlayService(ILogger<PdfOverlayService> logger, IOptions<PdfOv
         {
             logger.LogError(e, "An error occurred while applying the templates.");
         }
+
+        hostApplicationLifetime.StopApplication();
 
         return Task.CompletedTask;
     }
@@ -94,6 +103,8 @@ public class PdfOverlayService(ILogger<PdfOverlayService> logger, IOptions<PdfOv
 
             // Choose the correct template: initial for the first page, continuation for others.
             var currentTemplateDoc = i == 1 ? initialTemplateDoc : continuationTemplateDoc;
+            var appliedTemplatePath = i == 1 ? firstTemplatePath : continuationTemplatePath;
+
             // Import the template page as a form XObject.
             var templateXObject = currentTemplateDoc.GetPage(1).CopyAsFormXObject(outputPdfDoc);
 
@@ -103,6 +114,9 @@ public class PdfOverlayService(ILogger<PdfOverlayService> logger, IOptions<PdfOv
             // First, draw the template, then overlay the text.
             canvas.AddXObjectAt(templateXObject, 0, 0);
             canvas.AddXObjectAt(textXObject, 0, 0);
+
+            // Log the applied template for this page
+            logger.LogInformation("Applied template to page {Page}: {Template}", i, appliedTemplatePath);
         }
     }
 }
