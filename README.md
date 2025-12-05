@@ -7,13 +7,14 @@ Troolean
 
 ## Project Overview
 
-OverlayPDF is a .NET 9 application designed to overlay text PDFs with predefined template PDFs. It uses the iText library to merge PDFs, applying a specific template to the first page and a different template to subsequent pages. This is useful for creating consistent document formats, such as adding letterheads or footers to documents.
+OverlayPDF is a .NET 10 application designed to overlay text PDFs with predefined template PDFs. It uses the iText library to merge PDFs, applying a specific template to the first page and a different template to subsequent pages. This is useful for creating consistent document formats, such as adding letterheads or footers to documents.
 
 ## Key Features
 
 - Overlay text PDFs with template PDFs.
 - Apply different templates to the first page and continuation pages.
 - Configurable template paths via `appsettings.json`.
+- Pass a markdown file (*.md) as argument and it will render as pdf based on the templates
 
 ![PDF Overlay Sample](assets/PDFOverlay_Sample.png)
 
@@ -35,7 +36,10 @@ OverlayPDF is a .NET 9 application designed to overlay text PDFs with predefined
   "PdfOverlayOptions": {
     "TemplateDirectory": "C:\\Temp\\Templates",
     "FirstPageTemplate": "InitialPageTemplate.pdf",
-    "ContinuationPageTemplate": "ContinuationPageTemplate.pdf"
+    "ContinuationPageTemplate": "ContinuationPageTemplate.pdf",
+    "DefaultFontFamily": "Arial",
+    "ContinuationTopMarginPoints": 72,
+    "ContinuationBottomMarginPoints": 36
   }
 }
 ```
@@ -46,4 +50,4 @@ OverlayPDF is a .NET 9 application designed to overlay text PDFs with predefined
 
 ## The project uses the following libraries
 
-- The awesome iText 7 library - https://itextpdf.com/
+- The awesome iText library - https://itextpdf.com/
