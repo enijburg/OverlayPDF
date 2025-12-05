@@ -4,22 +4,21 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Console;
 using OverlayPDF;
 
-var builder = Host.CreateDefaultBuilder(args)
-    .ConfigureLogging(logging =>
-    {
-        logging.ClearProviders();
-        logging.AddConsole(options => { options.FormatterName = "custom"; });
-        logging.AddConsoleFormatter<CustomConsoleFormatter, ConsoleFormatterOptions>();
-    })
-    .ConfigureServices((_, services) =>
-    {
-        services.AddOptions<PdfOverlayOptions>()
-            .BindConfiguration(nameof(PdfOverlayOptions))
-            .ValidateOnStart();
+var builder = Host.CreateApplicationBuilder(args);
 
-        services.AddHostedService<PdfOverlayService>();
-    });
+// Configure logging using the new builder APIs
+builder.Logging.ClearProviders();
+builder.Logging.AddConsole(options => { options.FormatterName = "custom"; });
+builder.Logging.AddConsoleFormatter<CustomConsoleFormatter, ConsoleFormatterOptions>();
 
-using var host = builder.Build();
+// Configure services
+builder.Services
+    .AddOptions<PdfOverlayOptions>()
+    .BindConfiguration(nameof(PdfOverlayOptions))
+    .ValidateOnStart();
 
-await host.RunAsync();
+builder.Services.AddHostedService<PdfOverlayService>();
+
+var app = builder.Build();
+
+await app.RunAsync();
