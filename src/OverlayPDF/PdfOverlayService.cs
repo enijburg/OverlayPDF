@@ -11,12 +11,13 @@ using iText.Layout.Font;
 using System.Text.RegularExpressions;
 using System.Globalization;
 using System.Text;
+using Microsoft.Extensions.Configuration;
 using Path = System.IO.Path;
 
 namespace OverlayPDF;
 
 public class PdfOverlayService(ILogger<PdfOverlayService> logger, IOptions<PdfOverlayOptions> options,
-    IHostApplicationLifetime hostApplicationLifetime) : BackgroundService
+    IHostApplicationLifetime hostApplicationLifetime, IConfiguration configuration) : BackgroundService
 {
     private readonly PdfOverlayOptions _overlayOptions = options.Value;
 
@@ -24,11 +25,14 @@ public class PdfOverlayService(ILogger<PdfOverlayService> logger, IOptions<PdfOv
     {
         // This implementation is synchronous because the iText library does not support asynchronous operations.
 
-        var args = Environment.GetCommandLineArgs();
-        // Use args[1] as the filename (adjust if needed)
-        var filename = args.Length > 1 ? args[1] : string.Empty;
+        // Use configured InputFile, respects -t flag and other settings
+        var filename = configuration["InputFile"] ?? string.Empty;
 
-        if (string.IsNullOrWhiteSpace(filename)) logger.LogError("No input file specified.");
+        if (string.IsNullOrWhiteSpace(filename))
+        {
+            logger.LogError("No input file specified.");
+            return Task.CompletedTask;
+        }
 
         if (!File.Exists(filename))
         {
@@ -39,7 +43,7 @@ public class PdfOverlayService(ILogger<PdfOverlayService> logger, IOptions<PdfOv
         logger.LogInformation("Applying templates to: '{Filename}'", Path.GetFileName(filename));
 
         var outputFilename = Path.Combine(Path.GetDirectoryName(filename)!,
-            $"{Path.GetFileNameWithoutExtension(filename)}_overlay.pdf");
+            $"{Path.GetFileNameWithoutExtension(filename)}_{configuration["FileSuffix"]}.pdf");
 
         var firstTemplatePath = Path.Combine(_overlayOptions.TemplateDirectory, _overlayOptions.FirstPageTemplate);
         var continuationTemplatePath =
@@ -48,16 +52,18 @@ public class PdfOverlayService(ILogger<PdfOverlayService> logger, IOptions<PdfOv
         if (!File.Exists(firstTemplatePath) || !File.Exists(continuationTemplatePath))
         {
             logger.LogError("""
-                            The template files do not exist. First template: {FirstTemplatePath},
-                            Continuation template: {ContinuationTemplatePath}",
+                            The template files do not exist:
+                            First template: {FirstTemplatePath},
+                            Continuation template: {ContinuationTemplatePath}
                             """, firstTemplatePath, continuationTemplatePath);
             return Task.CompletedTask;
         }
 
         // Log the templates that will be applied
         logger.LogInformation("""
-                              Using templates. First page: {FirstTemplatePath},
-                              Continuation pages: {ContinuationTemplatePath}",
+                              Using templates:
+                              First page: {FirstTemplatePath},
+                              Continuation pages: {ContinuationTemplatePath}
                               """, firstTemplatePath, continuationTemplatePath);
 
         // If input is markdown, render it to a temporary PDF using the size of the first template
