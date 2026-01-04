@@ -163,32 +163,44 @@ public class PdfOverlayService(ILogger<PdfOverlayService> logger, IOptions<PdfOv
             // First, draw the template, then overlay the text.
             canvas.AddXObjectAt(templateXObject, 0, 0);
 
-            // Calculate vertical translation for continuation pages so content is pushed below header
-            var translateY = 0f;
-            if (!useFirstTemplate && _overlayOptions.ContinuationTopMarginPoints > 0)
-            {
-                // Negative Y moves content down in PDF coordinate space
-                translateY = -_overlayOptions.ContinuationTopMarginPoints;
-            }
+            var topMarginPoints = useFirstTemplate
+                ? _overlayOptions.FirstPageTopMarginPoints
+                : _overlayOptions.ContinuationTopMarginPoints;
 
-            if (!useFirstTemplate && (_overlayOptions.ContinuationTopMarginPoints > 0 || _overlayOptions.ContinuationBottomMarginPoints > 0))
+            var bottomMarginPoints = useFirstTemplate
+                ? _overlayOptions.FirstPageBottomMarginPoints
+                : _overlayOptions.ContinuationBottomMarginPoints;
+
+            // Calculate vertical translation so content is pushed below header.
+            // Negative Y moves content down in PDF coordinate space.
+            var translateY = topMarginPoints > 0 ? -topMarginPoints : 0f;
+
+            if (topMarginPoints > 0 || bottomMarginPoints > 0)
             {
                 // Apply clipping so content does not draw into header or footer areas.
                 var pageWidth = pageSize.GetWidth();
                 var pageHeight = pageSize.GetHeight();
                 const float clipX = 0f;
-                var clipY = _overlayOptions.ContinuationBottomMarginPoints;
-                var clipHeight = pageHeight - _overlayOptions.ContinuationTopMarginPoints - _overlayOptions.ContinuationBottomMarginPoints;
+                var clipY = bottomMarginPoints;
+                var clipHeight = pageHeight - topMarginPoints - bottomMarginPoints;
 
-                canvas.SaveState();
-                canvas.Rectangle(clipX, clipY, pageWidth, clipHeight);
-                canvas.Clip();
-                canvas.EndPath();
+                if (clipHeight > 0)
+                {
+                    canvas.SaveState();
+                    canvas.Rectangle(clipX, clipY, pageWidth, clipHeight);
+                    canvas.Clip();
+                    canvas.EndPath();
 
-                // Draw the content XObject within the clipped region with vertical translation
-                canvas.AddXObjectAt(textXObject, 0, translateY);
+                    // Draw the content XObject within the clipped region with vertical translation
+                    canvas.AddXObjectAt(textXObject, 0, translateY);
 
-                canvas.RestoreState();
+                    canvas.RestoreState();
+                }
+                else
+                {
+                    // If margins exceed page height, fall back to drawing without clipping.
+                    canvas.AddXObjectAt(textXObject, 0, translateY);
+                }
             }
             else
             {
@@ -521,9 +533,9 @@ public class PdfOverlayService(ILogger<PdfOverlayService> logger, IOptions<PdfOv
             .ToList();
 
         var title = string.Empty;
-        var sections = new List<(string SectionTitle, List<(string Label, DateTime Start, double DurationDays, bool IsMilestone)> Tasks)>();
+        var sections = new List<TimelineSection>();
 
-        List<(string Label, DateTime Start, double DurationDays, bool IsMilestone)>? currentTasks = null;
+        List<TimelineTask>? currentTasks = null;
 
         // Date parsing patterns fallback
         var datePatterns = new[] { "yyyy-MM-dd", "yyyy-M-d", "yyyy/MM/dd", "MM/dd/yyyy", "M/d/yyyy" };
@@ -552,7 +564,7 @@ public class PdfOverlayService(ILogger<PdfOverlayService> logger, IOptions<PdfOv
             {
                 var sec = line[8..].Trim();
                 currentTasks = [];
-                sections.Add((sec, currentTasks));
+                sections.Add(new TimelineSection(sec, currentTasks));
                 continue;
             }
 
@@ -607,7 +619,7 @@ public class PdfOverlayService(ILogger<PdfOverlayService> logger, IOptions<PdfOv
                         }
                     }
 
-                    currentTasks.Add((label, startDate, days, isMilestone));
+                    currentTasks.Add(new TimelineTask(label, startDate, days, isMilestone));
                 }
             }
         }
@@ -702,4 +714,8 @@ public class PdfOverlayService(ILogger<PdfOverlayService> logger, IOptions<PdfOv
 
         static string ToInv(double v) => v.ToString("0.###", CultureInfo.InvariantCulture);
     }
+
+    private sealed record TimelineSection(string SectionTitle, List<TimelineTask> Tasks);
+
+    private sealed record TimelineTask(string Label, DateTime Start, double DurationDays, bool IsMilestone);
 }

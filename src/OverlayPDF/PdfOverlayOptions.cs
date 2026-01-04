@@ -6,6 +6,12 @@ public record PdfOverlayOptions
     public required string FirstPageTemplate { get; set; }
     public required string ContinuationPageTemplate { get; set; }
 
+    // Top margin (in points) to apply to first page so content is pushed down below headers
+    public float FirstPageTopMarginPoints { get; set; } = 0f;
+
+    // Bottom margin (in points) to reserve on first page so content does not touch footer
+    public float FirstPageBottomMarginPoints { get; set; } = 0f;
+
     // Top margin (in points) to apply to continuation pages so content is pushed down below headers
     public float ContinuationTopMarginPoints { get; set; } = 72f;
 
