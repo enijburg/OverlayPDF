@@ -91,8 +91,13 @@ public class SignatureBlockRenderer
         // Parse header to get column names
         var headerCells = tableLines[headerIndex].Split('|')
             .Select(c => c.Trim())
-            .Where(c => !string.IsNullOrEmpty(c))
             .ToList();
+
+        // Remove the first and last elements if they're empty (edges of the table)
+        if (headerCells.Count > 0 && string.IsNullOrEmpty(headerCells[0]))
+            headerCells.RemoveAt(0);
+        if (headerCells.Count > 0 && string.IsNullOrEmpty(headerCells[^1]))
+            headerCells.RemoveAt(headerCells.Count - 1);
 
         if (headerCells.Count < 2) // Need at least Field column and one signatory column
         {
@@ -131,7 +136,8 @@ public class SignatureBlockRenderer
         sb.AppendLine("<thead><tr>");
         foreach (var header in headerCells)
         {
-            sb.AppendLine($"<th style=\"border: 1px solid #ccc; padding: 8px; background-color: #f0f0f0; text-align: left;\">{System.Security.SecurityElement.Escape(header)}</th>");
+            var headerText = string.IsNullOrWhiteSpace(header) ? "&nbsp;" : System.Security.SecurityElement.Escape(header);
+            sb.AppendLine($"<th style=\"border: 1px solid #ccc; padding: 8px; background-color: #f0f0f0; text-align: left;\">{headerText}</th>");
         }
         sb.AppendLine("</tr></thead>");
 
@@ -151,19 +157,34 @@ public class SignatureBlockRenderer
                 var cellValue = row[colIdx];
                 var signatoryName = signatoryColumns[colIdx - 1];
 
+                // Use a placeholder name for empty signatory columns
+                var signatoryFieldName = string.IsNullOrWhiteSpace(signatoryName)
+                    ? $"Col{colIdx}"
+                    : signatoryName.Replace(" ", "");
+
                 // Generate unique field name
-                var uniqueFieldName = $"{sectionName.Replace(" ", "")}_{signatoryName.Replace(" ", "")}_{cleanFieldName.Replace(" ", "").Replace("/", "")}";
+                var uniqueFieldName = $"{sectionName.Replace(" ", "")}_{signatoryFieldName}_{cleanFieldName.Replace(" ", "").Replace("/", "")}";
 
                 // Check if this is a pre-filled value or a field placeholder
                 if (string.IsNullOrWhiteSpace(cellValue) || cellValue.Contains("...") || cellValue.All(c => char.IsWhiteSpace(c) || c == '.'))
                 {
+                    // Determine if this is a signature field
+                    var isSignatureField = cleanFieldName.Contains("Signature", StringComparison.OrdinalIgnoreCase);
+
                     // This is a field - render as an HTML input element
-                    sb.AppendLine($"<td style=\"border: 1px solid #ccc; padding: 4px;\"><input type=\"text\" name=\"{System.Security.SecurityElement.Escape(uniqueFieldName)}\" style=\"width: 95%; border: none; background: transparent; font-size: 10pt; padding: 2px;\" /></td>");
+                    if (isSignatureField)
+                    {
+                        sb.AppendLine($"<td style=\"border: 1px solid #ccc; padding: 4px;\"><input type=\"text\" name=\"{System.Security.SecurityElement.Escape(uniqueFieldName)}\" style=\"width: 98%; height: 100px; border: none; background: transparent; font-size: 10pt; padding: 2px;\" /></td>");
+                    }
+                    else
+                    {
+                        sb.AppendLine($"<td style=\"border: 1px solid #ccc; padding: 4px;\"><input type=\"text\" name=\"{System.Security.SecurityElement.Escape(uniqueFieldName)}\" style=\"width: 98%; border: none; background: transparent; font-size: 10pt; padding: 2px;\" /></td>");
+                    }
                 }
                 else
                 {
                     // Pre-filled value
-                    sb.AppendLine($"<td style=\"border: 1px solid #ccc; padding: 8px;\">{System.Security.SecurityElement.Escape(cellValue)}</td>");
+                    sb.AppendLine($"<td style=\"border: 1px solid #ccc; padding: 8px;\"><span name=\"{System.Security.SecurityElement.Escape(uniqueFieldName)}\">{System.Security.SecurityElement.Escape(cellValue)}</span></td>");
                 }
             }
 

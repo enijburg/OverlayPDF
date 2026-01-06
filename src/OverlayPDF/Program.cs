@@ -6,6 +6,8 @@ using Microsoft.Extensions.Logging.Console;
 using OverlayPDF;
 using OverlayPDF.Markdown;
 using OverlayPDF.Utilities;
+using MarkdownProcessor = OverlayPDF.Markdown.MarkdownProcessor;
+using TimelineRenderer = OverlayPDF.Markdown.TimelineRenderer;
 
 var builder = Host.CreateApplicationBuilder(args);
 

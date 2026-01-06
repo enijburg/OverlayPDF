@@ -2,7 +2,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
 
-namespace OverlayPDF;
+namespace OverlayPDF.Markdown;
 
 /// <summary>
 /// Renders timeline diagrams as SVG from simple timeline markup.

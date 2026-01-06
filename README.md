@@ -205,3 +205,22 @@ The application applies default styling to markdown content:
 ## The project uses the following libraries
 
 - The awesome iText library - https://itextpdf.com/
+
+## Known Issues
+
+### AcroForm Fields Not Preserved During PDF Merge
+
+When overlaying a PDF that contains AcroForm fields (fillable form fields) with template PDFs, the form fields are **not copied** to the final merged PDF. Only the visual appearance of the PDF content is preserved.
+
+**Impact:**
+- If your input PDF contains interactive form fields (text fields, checkboxes, signature fields, etc.), these will be flattened in the output
+- The merged PDF will show the field values as static text, but the fields will no longer be fillable
+
+**Note:** This issue does **not** affect signature blocks generated from markdown using the `signatures` code block feature. Those signature fields use a different rendering mechanism (HTML to PDF with AcroForm generation) and are preserved correctly in the final output.
+
+**Workaround:**
+- For external PDFs with form fields: Consider applying the form fields after the merge operation
+- For signature blocks: Use the markdown `signatures` feature which generates AcroForm fields that are preserved through the overlay process
+
+**Technical Details:**
+The issue occurs because the overlay process uses `PdfFormXObject` and `CopyAsFormXObject()` to apply margins to the content PDF before merging with templates. This method flattens the page content into an XObject, which does not preserve AcroForm fields. While `CopyPagesTo()` would preserve form fields, it doesn't support the margin adjustments needed for proper template alignment. For markdown-generated PDFs, this is solved by adding margins directly to the HTML before PDF conversion, avoiding the need for `CopyAsFormXObject()`.

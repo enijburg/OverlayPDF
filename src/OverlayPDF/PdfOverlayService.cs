@@ -1,6 +1,4 @@
-﻿using iText.Kernel.Geom;
-using iText.Kernel.Pdf;
-using Microsoft.Extensions.Hosting;
+﻿using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Configuration;
@@ -68,49 +66,33 @@ public class PdfOverlayService(
                               Continuation pages: {ContinuationTemplatePath}
                               """, firstTemplatePath, continuationTemplatePath);
 
-        // If input is markdown, render it to a temporary PDF using the size of the first template
+        // If input is markdown, render it directly with templates applied
         var inputExtension = Path.GetExtension(filename);
-        var textPdfPath = filename;
-        string? tempPdfPath = null;
 
         if (inputExtension.Equals(".md", StringComparison.OrdinalIgnoreCase))
         {
             try
             {
-                using var initialTemplateForSize = new PdfDocument(new PdfReader(firstTemplatePath));
-                var templateRect = initialTemplateForSize.GetPage(1).GetPageSize();
-                var pageSize = new PageSize(templateRect.GetWidth(), templateRect.GetHeight());
-
-                tempPdfPath = Path.ChangeExtension(Path.GetTempFileName(), ".pdf");
-                pdfGenerator.GeneratePdfFromMarkdown(filename, tempPdfPath, pageSize);
-                textPdfPath = tempPdfPath;
-                logger.LogInformation("Rendered markdown to temporary PDF: {TempPdf}", tempPdfPath);
+                // Generate PDF from markdown with templates applied directly
+                pdfGenerator.GeneratePdfFromMarkdownWithTemplates(filename, outputFilename, firstTemplatePath, continuationTemplatePath);
+                logger.LogInformation("Generated PDF from markdown with templates: {Output}", outputFilename);
             }
             catch (Exception e)
             {
-                logger.LogError(e, "Failed to render markdown to PDF. Error: {Message}, StackTrace: {StackTrace}", e.Message, e.StackTrace);
-                return Task.CompletedTask;
+                logger.LogError(e, "Failed to generate PDF from markdown. Error: {Message}, StackTrace: {StackTrace}", e.Message, e.StackTrace);
             }
         }
-
-        try
+        else
         {
-            pdfMerger.MergePdfsWithTwoTemplates(textPdfPath, outputFilename, firstTemplatePath, continuationTemplatePath);
-            logger.LogInformation("New file generated: {Output}", outputFilename);
-        }
-        catch (Exception e)
-        {
-            logger.LogError(e, "An error occurred while applying the templates.");
-        }
-        finally
-        {
-            if (tempPdfPath != null && File.Exists(tempPdfPath))
+            // For regular PDFs, use the merger
+            try
             {
-                try
-                {
-                    File.Delete(tempPdfPath);
-                }
-                catch { /* ignore cleanup failures */ }
+                pdfMerger.MergePdfsWithTwoTemplates(filename, outputFilename, firstTemplatePath, continuationTemplatePath);
+                logger.LogInformation("New file generated: {Output}", outputFilename);
+            }
+            catch (Exception e)
+            {
+                logger.LogError(e, "An error occurred while applying the templates.");
             }
         }
 

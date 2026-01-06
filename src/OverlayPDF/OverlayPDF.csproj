@@ -11,8 +11,8 @@
 	<ItemGroup>
 		<PackageReference Include="itext" Version="9.4.0" />
 		<PackageReference Include="itext.bouncy-castle-adapter" Version="9.4.0" />
-		<PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.0" />
-		<PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.0" />
+		<PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.1" />
+		<PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.1" />
 		<PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
 		<PackageReference Include="Markdig" Version="0.44.0" />
 		<PackageReference Include="itext.pdfhtml" Version="6.3.0" />

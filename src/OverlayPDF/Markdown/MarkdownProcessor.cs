@@ -1,8 +1,7 @@
-using OverlayPDF.Markdown;
 using System.Text;
 using System.Text.RegularExpressions;
 
-namespace OverlayPDF;
+namespace OverlayPDF.Markdown;
 
 /// <summary>
 /// Handles markdown preprocessing, placeholder replacement, and special block transformations.
