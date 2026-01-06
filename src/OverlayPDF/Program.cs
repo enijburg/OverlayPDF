@@ -4,6 +4,8 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Console;
 using OverlayPDF;
+using OverlayPDF.Markdown;
+using OverlayPDF.Utilities;
 
 var builder = Host.CreateApplicationBuilder(args);
 
@@ -56,6 +58,14 @@ builder.Services
     .Bind(namedOptionsSection)
     .ValidateOnStart();
 
+// Register PDF processing services in dependency order
+// Note: Using Transient for services that are only used once during execution
+// and Singleton for stateless services
+builder.Services.AddSingleton<TimelineRenderer>();
+builder.Services.AddSingleton<SignatureBlockRenderer>();
+builder.Services.AddSingleton<MarkdownProcessor>();
+builder.Services.AddTransient<PdfGenerator>();
+builder.Services.AddTransient<PdfMerger>();
 builder.Services.AddHostedService<PdfOverlayService>();
 
 var app = builder.Build();
