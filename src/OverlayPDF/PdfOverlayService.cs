@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Configuration;
 using Path = System.IO.Path;
+using iText.Kernel.Geom;
 using OverlayPDF.Markdown;
 
 namespace OverlayPDF;
@@ -45,6 +46,28 @@ public class PdfOverlayService(
         var outputFilename = Path.Combine(Path.GetDirectoryName(filename)!,
             $"{Path.GetFileNameWithoutExtension(filename)}_{configuration["FileSuffix"]}.pdf");
 
+        var inputExtension = Path.GetExtension(filename);
+
+        var noTemplate = string.Equals(configuration["NoTemplate"], "true", StringComparison.OrdinalIgnoreCase);
+
+        if (noTemplate && inputExtension.Equals(".md", StringComparison.OrdinalIgnoreCase))
+        {
+            // Render markdown directly to PDF without applying templates/stationary
+            try
+            {
+                var pageSize = PageSize.A4;
+                pdfGenerator.GeneratePdfFromMarkdown(filename, outputFilename, pageSize);
+                logger.LogInformation("Generated PDF from markdown without template: {Output}", outputFilename);
+            }
+            catch (Exception e)
+            {
+                logger.LogError(e, "Failed to generate PDF from markdown without template. Error: {Message}", e.Message);
+            }
+
+            hostApplicationLifetime.StopApplication();
+            return Task.CompletedTask;
+        }
+
         var firstTemplatePath = Path.Combine(_overlayOptions.TemplateDirectory, _overlayOptions.FirstPageTemplate);
         var continuationTemplatePath =
             Path.Combine(_overlayOptions.TemplateDirectory, _overlayOptions.ContinuationPageTemplate);
@@ -67,8 +90,6 @@ public class PdfOverlayService(
                               """, firstTemplatePath, continuationTemplatePath);
 
         // If input is markdown, render it directly with templates applied
-        var inputExtension = Path.GetExtension(filename);
-
         if (inputExtension.Equals(".md", StringComparison.OrdinalIgnoreCase))
         {
             try

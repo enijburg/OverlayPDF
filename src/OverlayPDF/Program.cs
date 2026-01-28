@@ -22,43 +22,74 @@ builder.Logging.AddConsoleFormatter<CustomConsoleFormatter, ConsoleFormatterOpti
 var template = GetCommandLineValue(args, "--template")
                ?? GetCommandLineValue(args, "-t");
 
+// Support a flag to render markdown directly without applying any stationary/template
+var noTemplate = args.Any(a => string.Equals(a, "--no-template", StringComparison.OrdinalIgnoreCase) ||
+                              a.StartsWith("--no-template=", StringComparison.OrdinalIgnoreCase));
+
 var inputFile = GetFirstNonOptionArgument(args);
 
-var optionsRoot = builder.Configuration.GetSection(nameof(PdfOverlayOptions));
-var availableTemplates = optionsRoot.GetChildren()
-    .Select(c => c.Key)
-    .Where(k => !string.IsNullOrWhiteSpace(k))
-    .ToArray();
-
-var resolvedTemplate = string.IsNullOrWhiteSpace(template)
-    ? availableTemplates.FirstOrDefault()
-    : template;
-
-if (string.IsNullOrWhiteSpace(resolvedTemplate))
+if (noTemplate)
 {
-    throw new InvalidOperationException($"No '{nameof(PdfOverlayOptions)}' templates were found in configuration.");
+    // Apply overrides so the worker can construct output and locate the input file.
+    builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
+    {
+        ["NoTemplate"] = "true",
+        ["FileSuffix"] = "no-template",
+        ["InputFile"] = inputFile
+    });
+
+    // Provide minimal defaults for options used during markdown rendering. Do not validate on start.
+    builder.Services.AddOptions<PdfOverlayOptions>().Configure(o =>
+    {
+        o.DefaultFontFamily = "sans-serif";
+        o.TemplateDirectory = string.Empty;
+        o.FirstPageTemplate = string.Empty;
+        o.ContinuationPageTemplate = string.Empty;
+        // When rendering without templates, ensure margins are zero so content fills the page
+        o.FirstPageTopMarginPoints = 0f;
+        o.FirstPageBottomMarginPoints = 0f;
+        o.ContinuationTopMarginPoints = 0f;
+        o.ContinuationBottomMarginPoints = 0f;
+    });
 }
-
-// Validate that the named section exists early so we fail fast with a clear message.
-var namedOptionsSectionPath = $"{nameof(PdfOverlayOptions)}:{resolvedTemplate}";
-var namedOptionsSection = builder.Configuration.GetSection(namedOptionsSectionPath);
-if (!namedOptionsSection.Exists())
+else
 {
-    throw new InvalidOperationException($"No configuration found for '{namedOptionsSectionPath}'. Update appsettings.json or pass --template <name>.");
+    var optionsRoot = builder.Configuration.GetSection(nameof(PdfOverlayOptions));
+    var availableTemplates = optionsRoot.GetChildren()
+        .Select(c => c.Key)
+        .Where(k => !string.IsNullOrWhiteSpace(k))
+        .ToArray();
+
+    var resolvedTemplate = string.IsNullOrWhiteSpace(template)
+        ? availableTemplates.FirstOrDefault()
+        : template;
+
+    if (string.IsNullOrWhiteSpace(resolvedTemplate))
+    {
+        throw new InvalidOperationException($"No '{nameof(PdfOverlayOptions)}' templates were found in configuration.");
+    }
+
+    // Validate that the named section exists early so we fail fast with a clear message.
+    var namedOptionsSectionPath = $"{nameof(PdfOverlayOptions)}:{resolvedTemplate}";
+    var namedOptionsSection = builder.Configuration.GetSection(namedOptionsSectionPath);
+    if (!namedOptionsSection.Exists())
+    {
+        throw new InvalidOperationException($"No configuration found for '{namedOptionsSectionPath}'. Update appsettings.json or pass --template <name>.");
+    }
+
+    // Apply overrides so the worker can construct output and locate the input file.
+    builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
+    {
+        ["FileSuffix"] = resolvedTemplate.ToLowerInvariant(),
+        ["InputFile"] = inputFile
+    });
+
+    // Bind and validate the named options section
+    builder.Services
+        .AddOptions<PdfOverlayOptions>()
+        .Bind(namedOptionsSection)
+        .ValidateOnStart();
 }
-
-// Apply overrides so the worker can construct output and locate the input file.
-builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
-{
-    ["FileSuffix"] = resolvedTemplate.ToLowerInvariant(),
-    ["InputFile"] = inputFile
-});
-
-// Configure services
-builder.Services
-    .AddOptions<PdfOverlayOptions>()
-    .Bind(namedOptionsSection)
-    .ValidateOnStart();
 
 // Register PDF processing services in dependency order
 // Note: Using Transient for services that are only used once during execution
