@@ -3,6 +3,7 @@ using iText.Kernel.Pdf;
 using iText.Kernel.Pdf.Canvas;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using OverlayPDF.Utilities;
 
 namespace OverlayPDF;
 
@@ -107,6 +108,10 @@ public class PdfMerger(ILogger<PdfMerger> logger, IOptions<PdfOverlayOptions> op
 
             // Log the applied template for this page
             logger.LogInformation("Applied template to page {Page}: {Template}", i, appliedTemplatePath);
+
+            // Add page number on non-first pages if configured
+            if (!useFirstTemplate && _overlayOptions.AddPageNumbers)
+                PdfPageRenderer.AddPageNumber(outputPdfDoc, newPage, i);
         }
     }
 }

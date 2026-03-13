@@ -29,4 +29,7 @@ public record PdfOverlayOptions
 
     // Default CSS font-family to use when rendering HTML (e.g. "Poppins, sans-serif").
     public required string DefaultFontFamily { get; set; }
+
+    // When true, a page number is printed at the bottom-centre of every page except the first.
+    public bool AddPageNumbers { get; set; } = false;
 }

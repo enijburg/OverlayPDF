@@ -15,6 +15,7 @@ OverlayPDF is a .NET 10 application designed to overlay text PDFs with predefine
 - Apply different templates to the first page and continuation pages.
 - Configurable template paths via `appsettings.json`.
 - Pass a markdown file (*.md) as argument and it will render as pdf based on the templates
+- Optionally add page numbers on all pages except the first page
 
 ![PDF Overlay Sample](assets/PDFOverlay_Sample.png)
 
@@ -44,7 +45,8 @@ OverlayPDF is a .NET 10 application designed to overlay text PDFs with predefine
       "ContinuationTopMarginPoints": 72,
       "ContinuationBottomMarginPoints": 36,
       "LeftMarginPoints": 60,
-      "RightMarginPoints": 60
+      "RightMarginPoints": 60,
+      "AddPageNumbers": false
     },
     "template_2": {
       "TemplateDirectory": "C:\\Temp\\Templates",
@@ -56,7 +58,8 @@ OverlayPDF is a .NET 10 application designed to overlay text PDFs with predefine
       "ContinuationTopMarginPoints": 72,
       "ContinuationBottomMarginPoints": 36,
       "LeftMarginPoints": 60,
-      "RightMarginPoints": 60
+      "RightMarginPoints": 60,
+      "AddPageNumbers": false
     }
   }
 }
@@ -235,6 +238,7 @@ The application applies default styling to markdown content:
 - **Code blocks**: Monospace font with background color
 - **Line height**: 1.45 for improved readability
 - **Left/Right Margins**: Configurable via `LeftMarginPoints` and `RightMarginPoints` in appsettings.json (default: 60pt each)
+- **Page Numbers**: When `AddPageNumbers` is set to `true` in appsettings.json, a centred page number is printed at the bottom of every page except the first (default: `false`)
 
 ## The project uses the following libraries
 
