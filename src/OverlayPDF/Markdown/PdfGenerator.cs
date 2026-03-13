@@ -2,8 +2,12 @@ using iText.Html2pdf;
 using iText.Kernel.Geom;
 using iText.Kernel.Pdf;
 using iText.Kernel.Pdf.Canvas;
+using iText.Kernel.Pdf.Navigation;
 using iText.Layout.Font;
 using Markdig;
+using Markdig.Renderers.Html;
+using Markdig.Syntax;
+using Markdig.Syntax.Inlines;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Path = System.IO.Path;
@@ -28,6 +32,10 @@ public class PdfGenerator(IOptions<PdfOverlayOptions> options, MarkdownProcessor
         using var initialTemplateDoc = new PdfDocument(new PdfReader(firstTemplatePath));
         var templateRect = initialTemplateDoc.GetPage(1).GetPageSize();
         var pageSize = new PageSize(templateRect.GetWidth(), templateRect.GetHeight());
+
+        // Extract headings once here so we don't need to re-read the file inside the try block.
+        var rawMarkdown = File.ReadAllText(markdownPath);
+        var headings = ExtractHeadings(rawMarkdown);
 
         // First, generate PDF from markdown to a temporary location
         var tempContentPdf = Path.ChangeExtension(Path.GetTempFileName(), ".pdf");
@@ -85,6 +93,11 @@ public class PdfGenerator(IOptions<PdfOverlayOptions> options, MarkdownProcessor
 
                 logger.LogDebug("Copied {Count} named destination(s) to output PDF", srcNames.Count);
             }
+
+            // Add PDF bookmarks (outline) to the output PDF so that the TOC sidebar is
+            // populated and heading entries are navigable in PDF viewers.
+            AddOutlines(outputPdfDoc, headings);
+            logger.LogDebug("Added {Count} outline entry/entries to output PDF", headings.Count);
         }
         finally
         {
@@ -305,6 +318,103 @@ public class PdfGenerator(IOptions<PdfOverlayOptions> options, MarkdownProcessor
 
         converterProperties.SetFontProvider(fontProvider);
 
+        // Add PDF bookmarks (outline) before conversion so the catalog entry exists
+        // in the document. The outline items use PdfStringDestination (named destinations)
+        // which are created by HtmlConverter from heading id attributes; PDF viewers
+        // resolve these names when the document is opened.
+        var headings = ExtractHeadings(markdown);
+        AddOutlines(pdf, headings);
+
         HtmlConverter.ConvertToPdf(html, pdf, converterProperties);
+    }
+
+    /// <summary>
+    /// Parses the markdown source and returns all ATX headings as a flat list ordered by
+    /// document position, together with the level (1-6), the plain-text title, and the
+    /// anchor ID that Markdig's AutoIdentifiers extension assigns to each heading.
+    /// </summary>
+    internal static List<(int Level, string Text, string Id)> ExtractHeadings(string markdown)
+    {
+        var pipeline = new MarkdownPipelineBuilder().UseAdvancedExtensions().Build();
+        var document = Markdig.Markdown.Parse(markdown, pipeline);
+        var headings = new List<(int Level, string Text, string Id)>();
+
+        foreach (var block in document)
+        {
+            if (block is not HeadingBlock heading)
+                continue;
+
+            var id = heading.TryGetAttributes()?.Id ?? string.Empty;
+            if (string.IsNullOrEmpty(id))
+                continue;
+
+            var text = GetInlineText(heading.Inline);
+            if (!string.IsNullOrWhiteSpace(text))
+                headings.Add((heading.Level, text, id));
+        }
+
+        return headings;
+    }
+
+    /// <summary>
+    /// Recursively extracts plain text from a Markdig inline tree.
+    /// </summary>
+    private static string GetInlineText(ContainerInline? container)
+    {
+        if (container is null)
+            return string.Empty;
+
+        var sb = new System.Text.StringBuilder();
+        foreach (var inline in container)
+        {
+            switch (inline)
+            {
+                case LiteralInline literal:
+                    sb.Append(literal.Content.ToString());
+                    break;
+                case CodeInline code:
+                    sb.Append(code.Content);
+                    break;
+                case ContainerInline nested:
+                    sb.Append(GetInlineText(nested));
+                    break;
+            }
+        }
+
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Builds a hierarchical PDF outline (bookmark tree) in <paramref name="pdfDoc"/> from the
+    /// supplied heading list.  Each entry targets the named destination that iText pdfHTML creates
+    /// from the heading's HTML <c>id</c> attribute, so the bookmarks navigate to the correct page.
+    /// </summary>
+    internal static void AddOutlines(PdfDocument pdfDoc, IReadOnlyList<(int Level, string Text, string Id)> headings)
+    {
+        if (headings.Count == 0)
+            return;
+
+        var root = pdfDoc.GetOutlines(false);
+
+        // Maps heading level → the most-recently-added outline at that level so we can nest children.
+        var parentsByLevel = new Dictionary<int, PdfOutline> { [0] = root };
+
+        foreach (var (level, text, id) in headings)
+        {
+            // Walk up to find the nearest defined parent level.
+            var parentLevel = level - 1;
+            while (parentLevel > 0 && !parentsByLevel.ContainsKey(parentLevel))
+                parentLevel--;
+
+            var parent = parentsByLevel.GetValueOrDefault(parentLevel, root);
+            var outline = parent.AddOutline(text);
+            outline.AddDestination(new PdfStringDestination(id));
+
+            // Register this entry as the current parent for deeper levels and
+            // remove any stale entries from previously-visited deeper levels.
+            parentsByLevel[level] = outline;
+            foreach (var stale in parentsByLevel.Keys.Where(k => k > level).ToList())
+                parentsByLevel.Remove(stale);
+        }
     }
 }
