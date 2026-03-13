@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+using System.Linq;
 using iText.Kernel.Geom;
 using iText.Kernel.Pdf;
 using iText.Kernel.Pdf.Annot;
@@ -17,7 +19,7 @@ namespace OverlayPDF.Tests;
 public class PdfGeneratorInternalLinksTests
 {
     // Simple markdown with a two-entry table of contents pointing to two sections.
-    // Markdig AutoIdentifiers (Default mode) will generate id="introduction" and id="conclusion".
+    // Markdig AutoIdentifiers (GitHub mode) will generate id="introduction" and id="conclusion".
     private const string MarkdownWithInternalLinks = """
         # Document
 
@@ -128,6 +130,77 @@ public class PdfGeneratorInternalLinksTests
 
             Assert.True(goToCount >= 2,
                 $"Expected at least 2 GoTo link annotations for the two ToC entries, but found {goToCount}");
+        }
+        finally
+        {
+            Cleanup(markdownPath, outputPdfPath);
+        }
+    }
+
+    [Fact]
+    public void ExtractHeadings_NumberedHeadings_ReturnsGitHubCompatibleIds()
+    {
+        // GitHub-style AutoIdentifiers keep leading numbers in heading IDs.
+        // "# 1. Overview" must produce id "1-overview", not "overview".
+        // Users authoring GFM documents write TOC links like [1. Overview](#1-overview);
+        // if the wrong ID is generated the links silently fail and all navigate to the
+        // same fallback destination.
+        const string markdown = """
+            # 1. Overview
+
+            ## 2. Architecture
+
+            ## 3. Storage Layout & Permissions
+            """;
+
+        var headings = PdfGenerator.ExtractHeadings(markdown);
+
+        Assert.Equal(3, headings.Count);
+        Assert.Equal("1-overview", headings[0].Id);
+        Assert.Equal("2-architecture", headings[1].Id);
+        // The & is removed by GitHub AutoIdentifiers, leaving two adjacent hyphens from the
+        // surrounding spaces → "3-storage-layout--permissions".
+        Assert.Equal("3-storage-layout--permissions", headings[2].Id);
+    }
+
+    [Fact]
+    public void GeneratePdfFromMarkdown_NumberedHeadings_NamedDestinationsUseGitHubIds()
+    {
+        // Verify that the named destinations in the generated PDF use GitHub-compatible
+        // heading IDs (number prefix preserved) so that user TOC links like
+        // [1. Overview](#1-overview) can navigate correctly.
+        const string markdown = """
+            # 1. Overview
+
+            Some overview content.
+
+            ## 2. Architecture
+
+            Some architecture content.
+
+            ## 3. Storage Layout & Permissions
+
+            Some storage content.
+            """;
+
+        var (markdownPath, outputPdfPath) = CreateTempPaths("numbered");
+        File.WriteAllText(markdownPath, markdown);
+
+        try
+        {
+            CreatePdfGenerator().GeneratePdfFromMarkdown(markdownPath, outputPdfPath, PageSize.A4);
+
+            using var pdfDoc = new PdfDocument(new PdfReader(outputPdfPath));
+            var names = pdfDoc.GetCatalog().GetNameTree(PdfName.Dests).GetNames();
+            var destNames = new HashSet<string>(names.Keys.Select(k => k.GetValue()), StringComparer.Ordinal);
+
+            // GitHub-compatible IDs — numbers must be present.
+            Assert.Contains("1-overview", destNames);
+            Assert.Contains("2-architecture", destNames);
+
+            // Default-mode IDs that would appear if the bug were reintroduced.
+            Assert.DoesNotContain("overview", destNames);
+            Assert.DoesNotContain("architecture", destNames);
         }
         finally
         {
