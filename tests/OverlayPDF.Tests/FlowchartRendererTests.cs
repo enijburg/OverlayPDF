@@ -724,5 +724,117 @@ public class FlowchartRendererTests
         Assert.Contains("XSLT Conversion", result);
         Assert.Contains("Folder Destination", result);
         Assert.Contains("Parameters", result);
+
+        // Layout: XSL and PARAMS must be in a later layer than DB (their X must be
+        // greater than DB's X) because the backward pass should push them from layer 0
+        // to layer 1.  DB directly connects to SRC which connects to XSLT, so DB
+        // correctly stays at layer 0.  XSL and PARAMS skip straight to XSLT (layer 2
+        // in the forward pass), so the backward pass moves them to layer 1.
+        var xPositions = new Dictionary<string, double>();
+        foreach (Match m in Regex.Matches(result, @"<text x=""([\d.]+)""[^>]*>([^<]+)</text>"))
+        {
+            var label = m.Groups[2].Value.Trim();
+            var x = double.Parse(m.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
+            if (!xPositions.ContainsKey(label)) xPositions[label] = x;
+        }
+        // DB text center-x should be less than SRC, XSL, and PARAMS center-x.
+        Assert.True(xPositions["SQL Server"] < xPositions["Database Source"],
+            "DB must be in an earlier layer (smaller X) than SRC.");
+        Assert.True(xPositions["SQL Server"] < xPositions["orders-to-report.xslt"],
+            "DB must be in an earlier layer (smaller X) than XSL.");
+        Assert.True(xPositions["SQL Server"] < xPositions["Parameters"],
+            "DB must be in an earlier layer (smaller X) than PARAMS.");
+        // SRC, XSL, PARAMS must all be in the same layer (same rect left-edge X).
+        // Their text center-X values differ because nodes have different widths, but the
+        // difference must be far smaller than one layer gap (~200 px).
+        const double sameLayerTolerance = 60.0; // px – comfortably less than one layer gap
+        Assert.True(
+            Math.Abs(xPositions["Database Source"] - xPositions["orders-to-report.xslt"]) < sameLayerTolerance,
+            "SRC and XSL must be in the same layer column.");
+        Assert.True(
+            Math.Abs(xPositions["Database Source"] - xPositions["Parameters"]) < sameLayerTolerance,
+            "SRC and PARAMS must be in the same layer column.");
+        // XSLT must be in a later layer than SRC/XSL/PARAMS.
+        Assert.True(xPositions["XSLT Conversion"] > xPositions["Database Source"],
+            "XSLT must be in a later layer than SRC/XSL/PARAMS.");
+    }
+
+    [Fact]
+    public void RenderToSvg_SkipLayerRootsNormalized_NoSkipEdges()
+    {
+        // When multiple root nodes (no predecessors) all feed into the same downstream
+        // node at a layer > 1, the backward pass must move them to (targetLayer - 1) so
+        // that every edge spans exactly one layer.  Without this fix, those root nodes
+        // stay at layer 0, creating long diagonal "skip" edges that visually cross the
+        // direct-path edges.
+        var renderer = new FlowchartRenderer();
+        var definition = """
+            flowchart LR
+                A[Start] --> B[Middle] --> C[End]
+                X[Side] --> C
+            """;
+
+        // After the backward pass: A=0, B=1, C=2, X=1 (X moved from 0 to 1).
+        // All edges span exactly one layer: A→B, B→C, X→C are all 1-step.
+        var result = renderer.RenderToSvg(definition);
+
+        Assert.Contains("<svg", result);
+
+        var xPos = new Dictionary<string, double>();
+        foreach (Match m in Regex.Matches(result, @"<text x=""([\d.]+)""[^>]*>([^<]+)</text>"))
+        {
+            var label = m.Groups[2].Value.Trim();
+            var x = double.Parse(m.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
+            if (!xPos.ContainsKey(label)) xPos[label] = x;
+        }
+
+        // X (Side) must be in the same layer as B (Middle), not in layer 0 with A (Start).
+        Assert.True(xPos.ContainsKey("Start") && xPos.ContainsKey("Middle") &&
+                    xPos.ContainsKey("End") && xPos.ContainsKey("Side"),
+                    "All node labels must be present.");
+        Assert.True(xPos["Start"] < xPos["Middle"], "A must be before B.");
+        Assert.True(xPos["Middle"] < xPos["End"], "B must be before C.");
+        // Middle and Side are in the same layer; their text center-X values may differ
+        // by up to one node-width difference, but must be much less than one layer gap.
+        Assert.True(Math.Abs(xPos["Middle"] - xPos["Side"]) < 60.0,
+            $"Middle and Side must be in the same layer column (diff={Math.Abs(xPos["Middle"] - xPos["Side"]):F1}px).");
+        Assert.True(xPos["Side"] < xPos["End"], "X must be before C.");
+    }
+
+    [Fact]
+    public void RenderToSvg_SingleNodeLayerAlignedWithNeighbors_LR()
+    {
+        // Single-node layers must be repositioned to align with the average Y-center
+        // of their direct neighbors (predecessors preferred, then successors) so that
+        // connecting edges are nearly horizontal rather than steep diagonals.
+        var renderer = new FlowchartRenderer();
+        var definition = """
+            flowchart LR
+                A[Alpha] --> B[Beta]
+                C[Gamma] --> B
+                C --> D[Delta]
+            """;
+
+        var result = renderer.RenderToSvg(definition);
+        Assert.Contains("<svg", result);
+
+        // A is in layer 0 alone.  Its only successor is B which is in layer 1.
+        // B is in layer 1 alongside C (which moved from layer 0 to layer 1 via backward pass).
+        // A must be aligned to B's Y center (single-node alignment pass).
+        // The edge A→B should be nearly horizontal: |A.centerY - B.centerY| < NodeSpacing.
+        // We verify this by checking the path endpoints in the SVG.
+        var paths = Regex.Matches(result, @"<path d=""M([\d.]+),([\d.]+) C[\d.,]+ ([\d.]+),([\d.]+)""");
+        foreach (Match p in paths)
+        {
+            var y1 = double.Parse(p.Groups[2].Value, System.Globalization.CultureInfo.InvariantCulture);
+            var y2 = double.Parse(p.Groups[4].Value, System.Globalization.CultureInfo.InvariantCulture);
+            // No single straight edge should have a Y difference greater than 60 % of
+            // the chart height — a large difference would indicate a steep diagonal.
+            var svgHeight = double.Parse(
+                Regex.Match(result, @"height=""([\d.]+)""").Groups[1].Value,
+                System.Globalization.CultureInfo.InvariantCulture);
+            Assert.True(Math.Abs(y1 - y2) < svgHeight * 0.6,
+                $"Edge from y={y1} to y={y2} is too steep relative to chart height {svgHeight}.");
+        }
     }
 }

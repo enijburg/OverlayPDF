@@ -379,6 +379,27 @@ public partial class FlowchartRenderer
         // Assign remaining unvisited nodes to layer 0
         foreach (var n in model.Nodes.Values.Where(n => n.Layer < 0))
             n.Layer = 0;
+
+        // Backward pass: push each node as close as possible to its direct successors.
+        // A root node that connects only to a later layer (e.g. XSL → XSLT at layer 2
+        // while XSL is currently at layer 0) creates a "skip edge" that visually crosses
+        // other edges.  Moving it to (minSuccessorLayer − 1) makes every edge span
+        // exactly one layer and eliminates crossings.
+        var maxLayerVal = model.Nodes.Values.Max(n => n.Layer);
+        for (var layerIdx = maxLayerVal - 1; layerIdx >= 0; layerIdx--)
+        {
+            // Materialise so we don't modify the sequence while iterating.
+            var nodesAtLayer = model.Nodes.Values.Where(n => n.Layer == layerIdx).ToList();
+            foreach (var n in nodesAtLayer)
+            {
+                var succs = outgoing[n.Id];
+                if (succs.Count == 0) continue;
+                var minSuccLayer = succs.Min(sid => model.Nodes[sid].Layer);
+                var target = minSuccLayer - 1;
+                if (target > n.Layer)
+                    n.Layer = target;
+            }
+        }
     }
 
     private static void PositionNodes(FlowModel model)
@@ -440,6 +461,44 @@ public partial class FlowchartRenderer
             }
 
             primary += maxPrimary + LayerSpacing;
+        }
+
+        // Single-node-layer alignment: after the main centering loop every single-node
+        // layer sits at the vertical (LR) or horizontal (TD) midpoint of the widest
+        // layer, which can be far from its neighbors and produce steep diagonal edges.
+        // Re-anchor each such node to the average secondary-axis center of its direct
+        // predecessors (preferred) or successors so that connecting edges are as short
+        // and horizontal / vertical as possible.
+        foreach (var node in model.Nodes.Values)
+        {
+            if (model.Nodes.Values.Count(n => n.Layer == node.Layer) != 1) continue;
+
+            // Returns the secondary-axis centres of neighbouring nodes on the given side.
+            List<double> NeighborCenters(bool usePreds)
+            {
+                var result = new List<double>();
+                foreach (var e in model.Edges)
+                {
+                    var nbId = usePreds ? (e.To == node.Id ? e.From : null)
+                                       : (e.From == node.Id ? e.To : null);
+                    if (nbId == null || !model.Nodes.TryGetValue(nbId, out var nb)) continue;
+                    result.Add(horiz ? nb.Y + nb.H / 2.0 : nb.X + nb.W / 2.0);
+                }
+                return result;
+            }
+
+            var neighborCenters = NeighborCenters(true);   // predecessors
+            if (neighborCenters.Count == 0) neighborCenters = NeighborCenters(false); // successors
+            if (neighborCenters.Count == 0) continue;
+
+            var avg = neighborCenters.Average();
+            // subgraphTopMargin shifts the secondary origin for LR (horizontal) layouts
+            // that contain subgraph labels above the nodes.
+            var margin = SvgMargin + (horiz ? subgraphTopMargin : 0);
+            if (horiz)
+                node.Y = Math.Max(margin, avg - node.H / 2.0);
+            else
+                node.X = Math.Max(margin, avg - node.W / 2.0);
         }
 
         // Mirror positions for RL / BT directions
@@ -715,7 +774,7 @@ public partial class FlowchartRenderer
         var before = label.LastIndexOf(' ', mid);
         var after = label.IndexOf(' ', mid);
 
-        int splitAt;
+        var splitAt = 0; // initialised explicitly; set in every branch below
         if (before < 0 && after < 0) return [label];        // No spaces — can't wrap.
         else if (before < 0) splitAt = after;
         else if (after < 0) splitAt = before;
