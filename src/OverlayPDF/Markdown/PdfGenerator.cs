@@ -116,6 +116,8 @@ public class PdfGenerator(IOptions<PdfOverlayOptions> options, MarkdownProcessor
         var bottomMarginFirstPage = _overlayOptions.FirstPageBottomMarginPoints;
         var topMarginContinuation = _overlayOptions.ContinuationTopMarginPoints;
         var bottomMarginContinuation = _overlayOptions.ContinuationBottomMarginPoints;
+        var leftMargin = _overlayOptions.LeftMarginPoints;
+        var rightMargin = _overlayOptions.RightMarginPoints;
 
         var style = $$"""
                       <style>
@@ -124,7 +126,7 @@ public class PdfGenerator(IOptions<PdfOverlayOptions> options, MarkdownProcessor
                               font-size: 11pt;
                               line-height: 1.45;
                               color: #222;
-                              margin: 30px;
+                              margin: 0;
                           }
 
                           h1 {
@@ -177,12 +179,12 @@ public class PdfGenerator(IOptions<PdfOverlayOptions> options, MarkdownProcessor
                               vertical-align: top;
                           }
 
-                          /* Zebra striping – iText supports this only in this exact form */
+                          /* Zebra striping ï¿½ iText supports this only in this exact form */
                           tr.even td {
                               background-color: #f7f7f7;
                           }
 
-                          /* Totals row – iText friendly */
+                          /* Totals row ï¿½ iText friendly */
                           .total-row td {
                               font-weight: bold;
                               background-color: #f2f2f2;
@@ -200,11 +202,15 @@ public class PdfGenerator(IOptions<PdfOverlayOptions> options, MarkdownProcessor
                           @page {
                               margin-top: {{topMarginContinuation}}pt;
                               margin-bottom: {{bottomMarginContinuation}}pt;
+                              margin-left: {{leftMargin}}pt;
+                              margin-right: {{rightMargin}}pt;
                           }
 
                           @page :first {
                               margin-top: {{topMarginFirstPage}}pt;
                               margin-bottom: {{bottomMarginFirstPage}}pt;
+                              margin-left: {{leftMargin}}pt;
+                              margin-right: {{rightMargin}}pt;
                           }
                       </style>
                       """;
