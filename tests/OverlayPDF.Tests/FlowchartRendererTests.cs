@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Text.RegularExpressions;
 using OverlayPDF.Markdown;
 using Xunit;
 
@@ -309,5 +311,530 @@ public class FlowchartRendererTests
     {
         Assert.True(FlowchartRenderer.CanRender("Flowchart LR\n    A --> B"));
         Assert.True(FlowchartRenderer.CanRender("FLOWCHART TD\n    A --> B"));
+    }
+
+    [Fact]
+    public void RenderToSvg_SubgraphLabel_IsNotClipped()
+    {
+        // Regression test: subgraph title labels used to extend above y=0,
+        // making them invisible because the SVG viewBox started at y=0.
+        var renderer = new FlowchartRenderer();
+        var definition = """
+            flowchart TD
+                subgraph Configuration File
+                    direction TB
+                    A[Node A]
+                    B[Node B]
+                end
+                A --> B
+            """;
+
+        var result = renderer.RenderToSvg(definition);
+
+        Assert.Contains("<svg", result);
+        Assert.Contains("Configuration File", result);
+
+        Assert.True(TryFindSubgraphRectY(result, out var yValue),
+            "Subgraph background rect not found in SVG output.");
+        Assert.True(yValue >= 0,
+            $"Subgraph rect y={yValue} is negative – the title label would be clipped by the SVG viewport.");
+    }
+
+    [Fact]
+    public void RenderToSvg_SubgraphLabel_InLrLayout_IsNotClipped()
+    {
+        // Same regression check for left-to-right layouts with subgraphs.
+        var renderer = new FlowchartRenderer();
+        var definition = """
+            flowchart LR
+                subgraph My Group
+                    A[Node A]
+                    B[Node B]
+                end
+                A --> B
+            """;
+
+        var result = renderer.RenderToSvg(definition);
+
+        Assert.True(TryFindSubgraphRectY(result, out var yValue),
+            "Subgraph background rect not found in SVG output.");
+        Assert.True(yValue >= 0,
+            $"Subgraph rect y={yValue} is negative – the title label would be clipped by the SVG viewport.");
+    }
+
+    /// <summary>
+    /// Parses the y-coordinate of the subgraph background rect from an SVG string.
+    /// The subgraph rect is identified by its <c>stroke-dasharray="6 3"</c> border style.
+    /// </summary>
+    private static bool TryFindSubgraphRectY(string svg, out double yValue)
+    {
+        yValue = 0;
+        // Use a lookahead so the two attributes can appear in any order.
+        // RegexOptions.Singleline allows [^>] to span newlines within a tag.
+        var m = Regex.Match(svg,
+            @"<rect\b(?=[^>]*stroke-dasharray=""6 3"")[^>]*\by=""(-?[\d.]+)""",
+            RegexOptions.Singleline);
+        if (!m.Success) return false;
+        yValue = double.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture);
+        return true;
+    }
+
+    [Fact]
+    public void RenderToSvg_FullPipelineFlow_GeneratesValidSvg()
+    {
+        // Diagram 1 from the issue: simple LR pipeline with all five styled nodes.
+        var renderer = new FlowchartRenderer();
+        var definition = """
+            flowchart LR
+                A[Source] --> B[Conversion]
+                B --> C[Validation]
+                C --> D[Destination]
+                D --> E[Finalizers]
+
+                style A fill:#4A90D9,color:#fff
+                style B fill:#F5A623,color:#fff
+                style C fill:#7B68EE,color:#fff
+                style D fill:#50C878,color:#fff
+                style E fill:#CD5C5C,color:#fff
+            """;
+
+        var result = renderer.RenderToSvg(definition);
+
+        Assert.Contains("<svg", result);
+        Assert.Contains("</svg>", result);
+        Assert.Contains("Source", result);
+        Assert.Contains("Conversion", result);
+        Assert.Contains("Validation", result);
+        Assert.Contains("Destination", result);
+        Assert.Contains("Finalizers", result);
+        Assert.Contains("#4A90D9", result);
+        Assert.Contains("#F5A623", result);
+        Assert.Contains("#7B68EE", result);
+        Assert.Contains("#50C878", result);
+        Assert.Contains("#CD5C5C", result);
+        // All five nodes are present as rect elements
+        Assert.Equal(5, Regex.Matches(result, @"<rect[^>]+rx=""4""").Count);
+    }
+
+    [Fact]
+    public void RenderToSvg_LR_SingleNodeLayers_AllNodesShareSameY()
+    {
+        // In a LR diagram where every layer has exactly one node the centering
+        // offset is zero for every layer, so all nodes should share the same Y
+        // coordinate – i.e. they must be vertically aligned (same row).
+        var renderer = new FlowchartRenderer();
+        var definition = """
+            flowchart LR
+                A[Source] --> B[Conversion]
+                B --> C[Validation]
+                C --> D[Destination]
+                D --> E[Finalizers]
+            """;
+
+        var result = renderer.RenderToSvg(definition);
+
+        // Collect all y-values of rect elements (node bodies) using attribute-order-independent pattern.
+        // RegexOptions.Singleline handles SVG tags that may span multiple lines.
+        var yValues = Regex.Matches(result, @"<rect\b(?=[^>]*\brx=""4"")[^>]*>", RegexOptions.Singleline)
+            .Select(m =>
+            {
+                var ym = Regex.Match(m.Value, @"\by=""([\d.]+)""", RegexOptions.Singleline);
+                return ym.Success ? double.Parse(ym.Groups[1].Value, CultureInfo.InvariantCulture) : -1;
+            })
+            .ToList();
+
+        Assert.Equal(5, yValues.Count);
+        // All five nodes must share the same Y (single-node layers → centering offset = 0).
+        Assert.All(yValues, y => Assert.Equal(yValues[0], y));
+    }
+
+    [Fact]
+    public void RenderToSvg_TD_SingleRootNode_IsCenteredOverWiderLeafLayer()
+    {
+        // When the root layer has one node and the leaf layer has many nodes,
+        // the root node's x-center should equal the leaf layer's x-center.
+        var renderer = new FlowchartRenderer();
+        var definition = """
+            flowchart TD
+                ROOT[Root]
+                ROOT --> A[Alpha]
+                ROOT --> B[Beta]
+                ROOT --> C[Gamma]
+                ROOT --> D[Delta]
+            """;
+
+        var result = renderer.RenderToSvg(definition);
+
+        // Collect all node rects (identified by rx="4") using attribute-order-independent patterns.
+        // RegexOptions.Singleline handles SVG tags that may span multiple lines.
+        var allRects = Regex.Matches(result, @"<rect\b(?=[^>]*\brx=""4"")[^>]*>", RegexOptions.Singleline)
+            .Select(m =>
+            {
+                double Attr(string name)
+                {
+                    var am = Regex.Match(m.Value, $@"\b{name}=""([\d.]+)""", RegexOptions.Singleline);
+                    return am.Success ? double.Parse(am.Groups[1].Value, CultureInfo.InvariantCulture) : 0;
+                }
+                return (x: Attr("x"), y: Attr("y"), w: Attr("width"));
+            })
+            .ToList();
+
+        Assert.True(allRects.Count == 5, $"Expected 5 node rects, got {allRects.Count}");
+
+        // The root node is the one at the smallest y value (layer 0 in TD layout).
+        var rootRect = allRects.OrderBy(r => r.y).First();
+        var rootCx = rootRect.x + rootRect.w / 2;
+
+        // Leaf nodes (layer 1, larger y) – compute their collective centre.
+        var leafRects = allRects.OrderBy(r => r.y).Skip(1).ToList();
+        var leafLeft  = leafRects.Min(r => r.x);
+        var leafRight = leafRects.Max(r => r.x + r.w);
+        var leafCx = (leafLeft + leafRight) / 2;
+
+        // Root centre should be within 2 px of the leaf-layer centre.
+        Assert.True(Math.Abs(rootCx - leafCx) < 2,
+            $"Root centre x={rootCx:0.#} but leaf layer centre x={leafCx:0.#} – root is not centred.");
+    }
+
+    [Fact]
+    public void RenderToSvg_FullExtractorPluginDiagram_GeneratesValidSvg()
+    {
+        // Diagram 3 from the issue: Extractor.exe with built-in modules and plugins.
+        var renderer = new FlowchartRenderer();
+        var definition = """
+            flowchart TD
+                EXE[Extractor.exe] -->|loads| CORE[Built-in Modules]
+                EXE -->|loads| P1[Plugin: Excel Source]
+                EXE -->|loads| P2[Plugin: OnGuard Validation]
+                EXE -->|loads| P3[Plugin: Custom Conversion]
+
+                CORE --> SRC_DB[database]
+                CORE --> SRC_FILE[file]
+                CORE --> SRC_CSV[csv]
+                CORE --> SRC_XML[xml]
+                CORE --> CONV_XML[xml]
+                CORE --> CONV_CSV[csv]
+                CORE --> CONV_XSLT[xslt]
+                CORE --> CONV_ZIP[zip]
+                CORE --> DEST_FLD[folder]
+                CORE --> DEST_FTP[ftp]
+                CORE --> DEST_MAIL[mail]
+
+                style EXE fill:#4A90D9,color:#fff
+            """;
+
+        var result = renderer.RenderToSvg(definition);
+
+        Assert.Contains("<svg", result);
+        Assert.Contains("</svg>", result);
+        Assert.Contains("Extractor.exe", result);
+        Assert.Contains("Built-in Modules", result);
+        Assert.Contains("Plugin: Excel Source", result);
+        Assert.Contains("Plugin: OnGuard Validation", result);
+        Assert.Contains("Plugin: Custom Conversion", result);
+        Assert.Contains("database", result);
+        Assert.Contains("xslt", result);
+        Assert.Contains("folder", result);
+        Assert.Contains("#4A90D9", result);
+        // Three layers: EXE, CORE+Plugins, leaf nodes
+        Assert.Contains("marker-end=\"url(#fc-arrow)\"", result);
+        // Edge labels are rendered
+        Assert.Contains("loads", result);
+    }
+
+    [Fact]
+    public void RenderToSvg_CylinderNode_UsesCylinderSvgPath()
+    {
+        // The [(..)] Mermaid syntax must produce a cylinder (path + ellipse), not a rectangle.
+        var renderer = new FlowchartRenderer();
+        var definition = """
+            flowchart LR
+                DB[(Database)]
+                APP[Application]
+                APP --> DB
+            """;
+
+        var result = renderer.RenderToSvg(definition);
+
+        Assert.Contains("<svg", result);
+        Assert.Contains("Database", result);
+        // Cylinder is rendered as a <path> element (body) and an <ellipse> (top cap).
+        Assert.Contains("<path ", result);
+        Assert.Contains("<ellipse ", result);
+        // The cylinder text must not contain stray parentheses from the [(..)] delimiters.
+        Assert.DoesNotContain("(Database)", result);
+    }
+
+    [Fact]
+    public void RenderToSvg_XsltDiagram_CylinderAndDiamondRendered()
+    {
+        // Full XSLT pipeline from the issue: verifies [(..)] cylinder and {..} diamond shapes.
+        var renderer = new FlowchartRenderer();
+        var definition = """
+            flowchart LR
+                SRC[Source Data] --> INT[Internal XML<br/>Representation]
+                INT --> LOAD[Load &amp; Compile<br/>Stylesheet]
+                XSL[(XSLT File<br/>on disk)] --> LOAD
+                SD[Static Data /<br/>Config Variables] --> PARAMS[XSLT Parameters]
+                LOAD --> TRANSFORM[XslCompiledTransform]
+                PARAMS --> TRANSFORM
+                INT --> TRANSFORM
+                TRANSFORM --> OUT{xsl:output method?}
+                OUT -->|xml| XML[.xml file]
+                OUT -->|html| HTML[.htm file]
+                OUT -->|text| TXT[.csv / .txt file]
+                XML --> DEST[Destination]
+                HTML --> DEST
+                TXT --> DEST
+
+                style XSL fill:#F5A623,color:#fff
+                style TRANSFORM fill:#4A90D9,color:#fff
+            """;
+
+        var result = renderer.RenderToSvg(definition);
+
+        Assert.Contains("<svg", result);
+        Assert.Contains("</svg>", result);
+        // Cylinder node
+        Assert.Contains("XSLT File", result);
+        Assert.Contains("<ellipse ", result);
+        Assert.Contains("<path ", result);
+        // Diamond node
+        Assert.Contains("xsl:output method?", result);
+        Assert.Contains("<polygon ", result);
+        // Colours applied
+        Assert.Contains("#F5A623", result);
+        Assert.Contains("#4A90D9", result);
+        // All plain rectangular nodes present
+        Assert.Contains("Source Data", result);
+        Assert.Contains("XslCompiledTransform", result);
+        Assert.Contains("Destination", result);
+    }
+
+    [Fact]
+    public void RenderToSvg_NodeTextWithBackslash_EscapedAsXmlEntity()
+    {
+        // Backslashes in node text must be rendered as &#92; so that \< is never
+        // produced in SVG text content, which would be treated as a Markdown
+        // backslash-escape and cause the </text> closing tag to appear as visible text.
+        var renderer = new FlowchartRenderer();
+        var definition = """
+            flowchart LR
+                A[(C:\Stylesheets\)] --> B[output\reports\]
+            """;
+
+        var result = renderer.RenderToSvg(definition);
+
+        Assert.Contains("<svg", result);
+        // Backslash must be present as XML entity, not as a raw character.
+        Assert.Contains("&#92;", result);
+        // The text content must not contain a raw backslash followed immediately by
+        // the SVG closing tag (which would be misinterpreted as \< Markdown escape).
+        Assert.DoesNotMatch(@"\\</text>", result);
+    }
+
+    [Fact]
+    public void RenderToSvg_LongEdgeLabel_IsWordWrapped()
+    {
+        // Edge labels longer than EdgeLabelWrapChars should be split at a word boundary
+        // so they don't overflow into adjacent nodes and get hidden by node fills.
+        var renderer = new FlowchartRenderer();
+        var definition = """
+            flowchart LR
+                SRC[Source] -->|DataReader → DataSet → XML| DEST[Destination]
+            """;
+
+        var result = renderer.RenderToSvg(definition);
+
+        Assert.Contains("<svg", result);
+        // The full label text must be present (split across two <text> elements).
+        Assert.Contains("DataReader", result);
+        Assert.Contains("DataSet", result);
+        Assert.Contains("XML", result);
+        // The label must NOT appear as a single unbroken text line (it should be
+        // split since "DataReader → DataSet → XML" is 26 chars > EdgeLabelWrapChars=22).
+        Assert.DoesNotContain(">DataReader → DataSet → XML<", result);
+    }
+
+    [Fact]
+    public void RenderToSvg_EdgeLabelsRenderedAfterNodes()
+    {
+        // Edge labels must be rendered AFTER nodes in the SVG output so that
+        // the white label background (fill="#fff") appears on top of node fills
+        // rather than being covered by them.
+        var renderer = new FlowchartRenderer();
+        var definition = """
+            flowchart LR
+                A[Source] -->|label| B[Destination]
+            """;
+
+        var result = renderer.RenderToSvg(definition);
+
+        // Find position of last node rect and first edge label rect.
+        // We use simple string searches (IndexOf / LastIndexOf) rather than regex
+        // to avoid any ReDoS risk when scanning the SVG output.
+        var lastNodePos = result.LastIndexOf("rx=\"4\"", StringComparison.Ordinal);
+        var firstLabelPos = result.IndexOf("stroke=\"#ccc\"", StringComparison.Ordinal);
+
+        Assert.True(lastNodePos >= 0, "No node rect found.");
+        Assert.True(firstLabelPos >= 0, "No edge label rect found.");
+        Assert.True(firstLabelPos > lastNodePos,
+            $"Edge label rect (pos {firstLabelPos}) must appear after last node rect (pos {lastNodePos}).");
+    }
+
+    [Fact]
+    public void RenderToSvg_XsltPipelineDiagram_BackslashAndLongLabelRenderedCorrectly()
+    {
+        // Full smoke test for the XSLT pipeline diagram from the issue:
+        // covers cylinder backslash text, long edge label wrapping, and node ordering.
+        var renderer = new FlowchartRenderer();
+        var definition = """
+            flowchart LR
+                DB[(SQL Server<br/>ERP Database)] -->|query| SRC[Database Source<br/>OpenOrders]
+                SRC -->|DataReader → DataSet → XML| XSLT[XSLT Conversion<br/>order-transform]
+                XSL[(orders-to-report.xslt<br/>C:\Stylesheets\)] -->|compiled| XSLT
+                PARAMS[Parameters<br/>companyid=acme<br/>date=20250115<br/>department=Finance<br/>report-title=Open Orders Report] -->|xsl:param| XSLT
+                XSLT -->|html output| FILE[acme_Orders_20250115.html]
+                FILE --> DEST[Folder Destination<br/>output\order-reports\]
+
+                style XSLT fill:#F5A623,color:#fff
+                style XSL fill:#F5A623,color:#fff
+                style DB fill:#4A90D9,color:#fff
+            """;
+
+        var result = renderer.RenderToSvg(definition);
+
+        Assert.Contains("<svg", result);
+        Assert.Contains("</svg>", result);
+        // Cylinders are rendered correctly.
+        Assert.Contains("<ellipse ", result);
+        // Backslashes in node text are escaped as XML entities.
+        Assert.Contains("&#92;", result);
+        Assert.DoesNotMatch(@"\\</text>", result);
+        // Long edge label is split (not one long line).
+        Assert.Contains("DataReader", result);
+        Assert.Contains("DataSet", result);
+        Assert.DoesNotContain(">DataReader → DataSet → XML<", result);
+        // Styles applied.
+        Assert.Contains("#F5A623", result);
+        Assert.Contains("#4A90D9", result);
+        // Other nodes present.
+        Assert.Contains("SQL Server", result);
+        Assert.Contains("ERP Database", result);
+        Assert.Contains("XSLT Conversion", result);
+        Assert.Contains("Folder Destination", result);
+        Assert.Contains("Parameters", result);
+
+        // Layout: XSL and PARAMS must be in a later layer than DB (their X must be
+        // greater than DB's X) because the backward pass should push them from layer 0
+        // to layer 1.  DB directly connects to SRC which connects to XSLT, so DB
+        // correctly stays at layer 0.  XSL and PARAMS skip straight to XSLT (layer 2
+        // in the forward pass), so the backward pass moves them to layer 1.
+        var xPositions = new Dictionary<string, double>();
+        foreach (Match m in Regex.Matches(result, @"<text x=""([\d.]+)""[^>]*>([^<]+)</text>"))
+        {
+            var label = m.Groups[2].Value.Trim();
+            var x = double.Parse(m.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
+            if (!xPositions.ContainsKey(label)) xPositions[label] = x;
+        }
+        // DB text center-x should be less than SRC, XSL, and PARAMS center-x.
+        Assert.True(xPositions["SQL Server"] < xPositions["Database Source"],
+            "DB must be in an earlier layer (smaller X) than SRC.");
+        Assert.True(xPositions["SQL Server"] < xPositions["orders-to-report.xslt"],
+            "DB must be in an earlier layer (smaller X) than XSL.");
+        Assert.True(xPositions["SQL Server"] < xPositions["Parameters"],
+            "DB must be in an earlier layer (smaller X) than PARAMS.");
+        // SRC, XSL, PARAMS must all be in the same layer (same rect left-edge X).
+        // Their text center-X values differ because nodes have different widths, but the
+        // difference must be far smaller than one layer gap (~200 px).
+        const double sameLayerTolerance = 60.0; // px – comfortably less than one layer gap
+        Assert.True(
+            Math.Abs(xPositions["Database Source"] - xPositions["orders-to-report.xslt"]) < sameLayerTolerance,
+            "SRC and XSL must be in the same layer column.");
+        Assert.True(
+            Math.Abs(xPositions["Database Source"] - xPositions["Parameters"]) < sameLayerTolerance,
+            "SRC and PARAMS must be in the same layer column.");
+        // XSLT must be in a later layer than SRC/XSL/PARAMS.
+        Assert.True(xPositions["XSLT Conversion"] > xPositions["Database Source"],
+            "XSLT must be in a later layer than SRC/XSL/PARAMS.");
+    }
+
+    [Fact]
+    public void RenderToSvg_SkipLayerRootsNormalized_NoSkipEdges()
+    {
+        // When multiple root nodes (no predecessors) all feed into the same downstream
+        // node at a layer > 1, the backward pass must move them to (targetLayer - 1) so
+        // that every edge spans exactly one layer.  Without this fix, those root nodes
+        // stay at layer 0, creating long diagonal "skip" edges that visually cross the
+        // direct-path edges.
+        var renderer = new FlowchartRenderer();
+        var definition = """
+            flowchart LR
+                A[Start] --> B[Middle] --> C[End]
+                X[Side] --> C
+            """;
+
+        // After the backward pass: A=0, B=1, C=2, X=1 (X moved from 0 to 1).
+        // All edges span exactly one layer: A→B, B→C, X→C are all 1-step.
+        var result = renderer.RenderToSvg(definition);
+
+        Assert.Contains("<svg", result);
+
+        var xPos = new Dictionary<string, double>();
+        foreach (Match m in Regex.Matches(result, @"<text x=""([\d.]+)""[^>]*>([^<]+)</text>"))
+        {
+            var label = m.Groups[2].Value.Trim();
+            var x = double.Parse(m.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
+            if (!xPos.ContainsKey(label)) xPos[label] = x;
+        }
+
+        // X (Side) must be in the same layer as B (Middle), not in layer 0 with A (Start).
+        Assert.True(xPos.ContainsKey("Start") && xPos.ContainsKey("Middle") &&
+                    xPos.ContainsKey("End") && xPos.ContainsKey("Side"),
+                    "All node labels must be present.");
+        Assert.True(xPos["Start"] < xPos["Middle"], "A must be before B.");
+        Assert.True(xPos["Middle"] < xPos["End"], "B must be before C.");
+        // Middle and Side are in the same layer; their text center-X values may differ
+        // by up to one node-width difference, but must be much less than one layer gap.
+        Assert.True(Math.Abs(xPos["Middle"] - xPos["Side"]) < 60.0,
+            $"Middle and Side must be in the same layer column (diff={Math.Abs(xPos["Middle"] - xPos["Side"]):F1}px).");
+        Assert.True(xPos["Side"] < xPos["End"], "X must be before C.");
+    }
+
+    [Fact]
+    public void RenderToSvg_SingleNodeLayerAlignedWithNeighbors_LR()
+    {
+        // Single-node layers must be repositioned to align with the average Y-center
+        // of their direct neighbors (predecessors preferred, then successors) so that
+        // connecting edges are nearly horizontal rather than steep diagonals.
+        var renderer = new FlowchartRenderer();
+        var definition = """
+            flowchart LR
+                A[Alpha] --> B[Beta]
+                C[Gamma] --> B
+                C --> D[Delta]
+            """;
+
+        var result = renderer.RenderToSvg(definition);
+        Assert.Contains("<svg", result);
+
+        // A is in layer 0 alone.  Its only successor is B which is in layer 1.
+        // B is in layer 1 alongside C (which moved from layer 0 to layer 1 via backward pass).
+        // A must be aligned to B's Y center (single-node alignment pass).
+        // The edge A→B should be nearly horizontal: |A.centerY - B.centerY| < NodeSpacing.
+        // We verify this by checking the path endpoints in the SVG.
+        var paths = Regex.Matches(result, @"<path d=""M([\d.]+),([\d.]+) C[\d.,]+ ([\d.]+),([\d.]+)""");
+        foreach (Match p in paths)
+        {
+            var y1 = double.Parse(p.Groups[2].Value, System.Globalization.CultureInfo.InvariantCulture);
+            var y2 = double.Parse(p.Groups[4].Value, System.Globalization.CultureInfo.InvariantCulture);
+            // No single straight edge should have a Y difference greater than 60 % of
+            // the chart height — a large difference would indicate a steep diagonal.
+            var svgHeight = double.Parse(
+                Regex.Match(result, @"height=""([\d.]+)""").Groups[1].Value,
+                System.Globalization.CultureInfo.InvariantCulture);
+            Assert.True(Math.Abs(y1 - y2) < svgHeight * 0.6,
+                $"Edge from y={y1} to y={y2} is too steep relative to chart height {svgHeight}.");
+        }
     }
 }

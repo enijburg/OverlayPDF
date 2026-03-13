@@ -176,6 +176,35 @@ Create signature forms using fenced code blocks with the `signatures` language i
   - Pre-filled values remain as static text (e.g., `John Smith`, `2025-01-15`)
 - Separate multiple signature sections with `---` (horizontal rule)
 
+#### 5. Mermaid Flowcharts
+
+Create flowchart diagrams using fenced code blocks with the `mermaid` language identifier. Flowcharts are rendered natively to SVG — no external tools required.
+
+````markdown
+```mermaid
+flowchart LR
+    A[Source] --> B[Conversion]
+    B --> C[Validation]
+    C --> D[Destination]
+    D --> E[Finalizers]
+
+    style A fill:#4A90D9,color:#fff
+    style B fill:#F5A623,color:#fff
+    style C fill:#7B68EE,color:#fff
+    style D fill:#50C878,color:#fff
+    style E fill:#CD5C5C,color:#fff
+```
+````
+
+**Flowchart Syntax:**
+- `flowchart LR` / `TD` / `TB` / `RL` / `BT` — sets the layout direction
+- **Node shapes**: `[rect]`, `(rounded)`, `{diamond}`, `([stadium])`, `[[subroutine]]`, `((circle))`, `{{hexagon}}`, `>asymmetric]`
+- **Edges**: `-->` solid arrow, `---` line, `-.->` dashed arrow, `==>` thick arrow
+- **Edge labels**: `-->|label text|`
+- **Styling**: `style NodeId fill:#hex,color:#hex,stroke:#hex`
+- **Subgraphs**: `subgraph Title ... end` for grouped sections
+- **Multi-line text**: Use `<br/>` inside node labels for line breaks
+
 ### Unicode and Special Characters
 
 The application automatically handles problematic Unicode characters that may not render well in PDFs:

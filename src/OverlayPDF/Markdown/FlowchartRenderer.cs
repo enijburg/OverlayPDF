@@ -23,10 +23,20 @@ public partial class FlowchartRenderer
     private const double SvgMargin = 30;
     private const double SubgraphPad = 24;
     private const double SubgraphLabelHeight = 22;
+    /// <summary>Y-radius of the top and bottom ellipse caps on a cylinder node.</summary>
+    private const double CylinderCapRadius = 12.0;
+    /// <summary>Font size used for edge labels.</summary>
+    private const double EdgeLabelFontSize = 11;
+    /// <summary>Line height for multi-line edge labels.</summary>
+    private const double EdgeLabelLineHeight = 14;
+    /// <summary>Approximate character width at <see cref="EdgeLabelFontSize"/>.</summary>
+    private const double EdgeLabelCharWidth = CharWidth * EdgeLabelFontSize / FontSize;
+    /// <summary>Maximum characters per line before an edge label is word-wrapped.</summary>
+    private const int EdgeLabelWrapChars = 22;
 
     #region Types
 
-    private enum NodeShape { Rectangle, RoundedRect, Diamond, Stadium, Subroutine, Circle, Asymmetric, Hexagon }
+    private enum NodeShape { Rectangle, RoundedRect, Diamond, Stadium, Subroutine, Circle, Asymmetric, Hexagon, Cylinder }
 
     private enum EdgeLine { Solid, Dashed, Thick }
 
@@ -279,11 +289,13 @@ public partial class FlowchartRenderer
 
         var rest = s[i..];
 
-        // Multi-character bracket patterns checked first
+        // Multi-character bracket patterns checked first (order matters: "[(..." must precede "[..."
+        // so that the cylinder syntax is not accidentally matched as a plain rectangle).
         if (rest.StartsWith("([") && rest.EndsWith("])")) return (id, rest[2..^2], NodeShape.Stadium);
         if (rest.StartsWith("[[") && rest.EndsWith("]]")) return (id, rest[2..^2], NodeShape.Subroutine);
         if (rest.StartsWith("((") && rest.EndsWith("))")) return (id, rest[2..^2], NodeShape.Circle);
         if (rest.StartsWith("{{") && rest.EndsWith("}}")) return (id, rest[2..^2], NodeShape.Hexagon);
+        if (rest.StartsWith("[(") && rest.EndsWith(")]")) return (id, rest[2..^2], NodeShape.Cylinder);
         if (rest.StartsWith('[') && rest.EndsWith(']')) return (id, rest[1..^1], NodeShape.Rectangle);
         if (rest.StartsWith('(') && rest.EndsWith(')')) return (id, rest[1..^1], NodeShape.RoundedRect);
         if (rest.StartsWith('{') && rest.EndsWith('}')) return (id, rest[1..^1], NodeShape.Diamond);
@@ -312,6 +324,11 @@ public partial class FlowchartRenderer
             {
                 n.W *= 1.4;
                 n.H *= 1.4;
+            }
+            else if (n.Shape == NodeShape.Cylinder)
+            {
+                // Extra height for the top and bottom ellipse caps (CylinderCapRadius each).
+                n.H += CylinderCapRadius * 2;
             }
         }
     }
@@ -362,6 +379,27 @@ public partial class FlowchartRenderer
         // Assign remaining unvisited nodes to layer 0
         foreach (var n in model.Nodes.Values.Where(n => n.Layer < 0))
             n.Layer = 0;
+
+        // Backward pass: push each node as close as possible to its direct successors.
+        // A root node that connects only to a later layer (e.g. XSL → XSLT at layer 2
+        // while XSL is currently at layer 0) creates a "skip edge" that visually crosses
+        // other edges.  Moving it to (minSuccessorLayer − 1) makes every edge span
+        // exactly one layer and eliminates crossings.
+        var maxLayerVal = model.Nodes.Values.Max(n => n.Layer);
+        for (var layerIdx = maxLayerVal - 1; layerIdx >= 0; layerIdx--)
+        {
+            // Materialise so we don't modify the sequence while iterating.
+            var nodesAtLayer = model.Nodes.Values.Where(n => n.Layer == layerIdx).ToList();
+            foreach (var n in nodesAtLayer)
+            {
+                var succs = outgoing[n.Id];
+                if (succs.Count == 0) continue;
+                var minSuccLayer = succs.Min(sid => model.Nodes[sid].Layer);
+                var target = minSuccLayer - 1;
+                if (target > n.Layer)
+                    n.Layer = target;
+            }
+        }
     }
 
     private static void PositionNodes(FlowModel model)
@@ -378,12 +416,30 @@ public partial class FlowchartRenderer
         }
 
         var horiz = model.Direction is FlowDir.LR or FlowDir.RL;
-        double primary = SvgMargin;
+        // When subgraphs are present their title label extends SubgraphPad + SubgraphLabelHeight
+        // above the top of the nodes inside them. Add this extra offset so the label stays visible.
+        var subgraphTopMargin = model.Subgraphs.Count > 0 ? SubgraphPad + SubgraphLabelHeight : 0;
+        double primary = SvgMargin + (horiz ? 0 : subgraphTopMargin);
 
-        foreach (var layer in layers)
+        // Pre-compute the total secondary span (x-width for TD, y-height for LR) of every layer
+        // so that narrower layers can be centered relative to the widest one.
+        var layerNodes = layers
+            .Select(g => g.OrderBy(n => n.Order).ToList())
+            .ToList();
+        var layerSpans = layerNodes
+            .Select(nodes => nodes.Count == 0
+                ? 0.0
+                : nodes.Sum(n => horiz ? n.H : n.W) + NodeSpacing * (nodes.Count - 1))
+            .ToList();
+        var maxSpan = layerSpans.Count > 0 ? layerSpans.Max() : 0;
+
+        for (var li = 0; li < layerNodes.Count; li++)
         {
-            var nodes = layer.OrderBy(n => n.Order).ToList();
-            double secondary = SvgMargin;
+            var nodes = layerNodes[li];
+            // Center this layer within the widest layer.
+            double secondary = SvgMargin
+                + (horiz ? subgraphTopMargin : 0)
+                + (maxSpan - layerSpans[li]) / 2;
             double maxPrimary = 0;
 
             foreach (var n in nodes)
@@ -405,6 +461,44 @@ public partial class FlowchartRenderer
             }
 
             primary += maxPrimary + LayerSpacing;
+        }
+
+        // Single-node-layer alignment: after the main centering loop every single-node
+        // layer sits at the vertical (LR) or horizontal (TD) midpoint of the widest
+        // layer, which can be far from its neighbors and produce steep diagonal edges.
+        // Re-anchor each such node to the average secondary-axis center of its direct
+        // predecessors (preferred) or successors so that connecting edges are as short
+        // and horizontal / vertical as possible.
+        foreach (var node in model.Nodes.Values)
+        {
+            if (model.Nodes.Values.Count(n => n.Layer == node.Layer) != 1) continue;
+
+            // Returns the secondary-axis centres of neighbouring nodes on the given side.
+            List<double> NeighborCenters(bool usePreds)
+            {
+                var result = new List<double>();
+                foreach (var e in model.Edges)
+                {
+                    var nbId = usePreds ? (e.To == node.Id ? e.From : null)
+                                       : (e.From == node.Id ? e.To : null);
+                    if (nbId == null || !model.Nodes.TryGetValue(nbId, out var nb)) continue;
+                    result.Add(horiz ? nb.Y + nb.H / 2.0 : nb.X + nb.W / 2.0);
+                }
+                return result;
+            }
+
+            var neighborCenters = NeighborCenters(true);   // predecessors
+            if (neighborCenters.Count == 0) neighborCenters = NeighborCenters(false); // successors
+            if (neighborCenters.Count == 0) continue;
+
+            var avg = neighborCenters.Average();
+            // subgraphTopMargin shifts the secondary origin for LR (horizontal) layouts
+            // that contain subgraph labels above the nodes.
+            var margin = SvgMargin + (horiz ? subgraphTopMargin : 0);
+            if (horiz)
+                node.Y = Math.Max(margin, avg - node.H / 2.0);
+            else
+                node.X = Math.Max(margin, avg - node.W / 2.0);
         }
 
         // Mirror positions for RL / BT directions
@@ -486,7 +580,7 @@ public partial class FlowchartRenderer
                 $"<text x=\"{rx + 8:0.#}\" y=\"{ry + 16:0.#}\" class=\"fc-text\" fill=\"#666\" font-weight=\"bold\">{Esc(sg.Title)}</text>"));
         }
 
-        // Edges (rendered before nodes so nodes draw on top)
+        // Edges paths (rendered before nodes so nodes draw on top of arrow ends)
         var horiz = model.Direction is FlowDir.LR or FlowDir.RL;
         foreach (var edge in model.Edges)
         {
@@ -499,6 +593,15 @@ public partial class FlowchartRenderer
         // Nodes
         foreach (var node in model.Nodes.Values)
             AppendNode(sb, node);
+
+        // Edge labels (rendered after nodes so they appear on top of node fills)
+        foreach (var edge in model.Edges)
+        {
+            if (!model.Nodes.TryGetValue(edge.From, out var src) ||
+                !model.Nodes.TryGetValue(edge.To, out var dst))
+                continue;
+            AppendEdgeLabel(sb, src, dst, edge, horiz);
+        }
 
         sb.AppendLine("</svg>");
         return sb.ToString();
@@ -544,6 +647,18 @@ public partial class FlowchartRenderer
                 sb.AppendLine(string.Create(CultureInfo.InvariantCulture,
                     $"<polygon points=\"{n.X:0.#},{n.Y:0.#} {n.X + n.W - 10:0.#},{n.Y:0.#} {n.X + n.W:0.#},{cy:0.#} {n.X + n.W - 10:0.#},{n.Y + n.H:0.#} {n.X:0.#},{n.Y + n.H:0.#}\" fill=\"{n.Fill}\" stroke=\"{n.Stroke}\" stroke-width=\"1.5\" />"));
                 break;
+            case NodeShape.Cylinder:
+            {
+                var ry = CylinderCapRadius; // y-radius of the top/bottom ellipse caps
+                var rx = n.W / 2;
+                // Body: left side down, bottom arc, right side up, top arc (back).
+                sb.AppendLine(string.Create(CultureInfo.InvariantCulture,
+                    $"<path d=\"M {n.X:0.#},{n.Y + ry:0.#} A {rx:0.#},{ry:0.#} 0 0,0 {n.X + n.W:0.#},{n.Y + ry:0.#} V {n.Y + n.H - ry:0.#} A {rx:0.#},{ry:0.#} 0 0,1 {n.X:0.#},{n.Y + n.H - ry:0.#} Z\" fill=\"{n.Fill}\" stroke=\"{n.Stroke}\" stroke-width=\"1.5\" />"));
+                // Top ellipse drawn last so it appears on top (gives the 3-D cap illusion).
+                sb.AppendLine(string.Create(CultureInfo.InvariantCulture,
+                    $"<ellipse cx=\"{cx:0.#}\" cy=\"{n.Y + ry:0.#}\" rx=\"{rx:0.#}\" ry=\"{ry:0.#}\" fill=\"{n.Fill}\" stroke=\"{n.Stroke}\" stroke-width=\"1.5\" />"));
+                break;
+            }
             default: // Rectangle
                 sb.AppendLine(string.Create(CultureInfo.InvariantCulture,
                     $"<rect x=\"{n.X:0.#}\" y=\"{n.Y:0.#}\" width=\"{n.W:0.#}\" height=\"{n.H:0.#}\" rx=\"4\" fill=\"{n.Fill}\" stroke=\"{n.Stroke}\" stroke-width=\"1.5\" />"));
@@ -597,21 +712,85 @@ public partial class FlowchartRenderer
 
         sb.AppendLine(string.Create(CultureInfo.InvariantCulture,
             $"<path d=\"M{x1:0.#},{y1:0.#} C{cx1:0.#},{cy1:0.#} {cx2:0.#},{cy2:0.#} {x2:0.#},{y2:0.#}\" fill=\"none\" stroke=\"#555\" stroke-width=\"{sw}\"{dash}{marker} />"));
+    }
 
-        // Edge label with background
-        if (!string.IsNullOrWhiteSpace(edge.Label))
+    private static void AppendEdgeLabel(StringBuilder sb, FlowNode src, FlowNode dst, FlowEdge edge, bool horiz)
+    {
+        if (string.IsNullOrWhiteSpace(edge.Label)) return;
+
+        var srcCx = src.X + src.W / 2;
+        var srcCy = src.Y + src.H / 2;
+        var dstCx = dst.X + dst.W / 2;
+        var dstCy = dst.Y + dst.H / 2;
+
+        double x1, y1, x2, y2;
+        if (horiz)
         {
-            var lx = (x1 + x2) / 2;
-            var ly = (y1 + y2) / 2 - 4;
-            var lw = edge.Label.Length * CharWidth + 12;
+            if (srcCx <= dstCx)
+            { x1 = src.X + src.W; y1 = srcCy; x2 = dst.X; y2 = dstCy; }
+            else
+            { x1 = src.X; y1 = srcCy; x2 = dst.X + dst.W; y2 = dstCy; }
+        }
+        else
+        {
+            if (srcCy <= dstCy)
+            { x1 = srcCx; y1 = src.Y + src.H; x2 = dstCx; y2 = dst.Y; }
+            else
+            { x1 = srcCx; y1 = src.Y; x2 = dstCx; y2 = dst.Y + dst.H; }
+        }
+
+        var lx = (x1 + x2) / 2;
+        var lcy = (y1 + y2) / 2 - 4;  // vertical centre of the label block
+
+        var lines = WrapEdgeLabel(edge.Label);
+        var maxLineLen = lines.Max(l => l.Length);
+        var lw = maxLineLen * EdgeLabelCharWidth + 12;
+        var lh = (lines.Length - 1) * EdgeLabelLineHeight + 18;
+
+        // Background rect centred on lcy
+        sb.AppendLine(string.Create(CultureInfo.InvariantCulture,
+            $"<rect x=\"{lx - lw / 2:0.#}\" y=\"{lcy - lh / 2:0.#}\" width=\"{lw:0.#}\" height=\"{lh:0.#}\" rx=\"3\" fill=\"#fff\" stroke=\"#ccc\" stroke-width=\"1\" />"));
+
+        // Text lines: baseline of first line above centre, evenly spaced downward
+        var firstBaseline = lcy - (lines.Length - 1) * EdgeLabelLineHeight / 2.0 + EdgeLabelFontSize * 0.6;
+        for (var li = 0; li < lines.Length; li++)
+        {
             sb.AppendLine(string.Create(CultureInfo.InvariantCulture,
-                $"<rect x=\"{lx - lw / 2:0.#}\" y=\"{ly - 12:0.#}\" width=\"{lw:0.#}\" height=\"18\" rx=\"3\" fill=\"#fff\" stroke=\"#ccc\" stroke-width=\"1\" />"));
-            sb.AppendLine(string.Create(CultureInfo.InvariantCulture,
-                $"<text x=\"{lx:0.#}\" y=\"{ly + 2:0.#}\" text-anchor=\"middle\" font-size=\"11\" fill=\"#555\">{Esc(edge.Label)}</text>"));
+                $"<text x=\"{lx:0.#}\" y=\"{firstBaseline + li * EdgeLabelLineHeight:0.#}\" text-anchor=\"middle\" font-size=\"{EdgeLabelFontSize:0}\" fill=\"#555\">{Esc(lines[li])}</text>"));
         }
     }
 
-    private static string Esc(string s) => System.Security.SecurityElement.Escape(s) ?? string.Empty;
+    /// <summary>
+    /// Splits an edge label into multiple lines at word boundaries when it
+    /// exceeds <see cref="EdgeLabelWrapChars"/> characters per line.
+    /// </summary>
+    private static string[] WrapEdgeLabel(string label)
+    {
+        if (label.Length <= EdgeLabelWrapChars)
+            return [label];
+
+        // Find the space nearest to the string midpoint and split there.
+        var mid = label.Length / 2;
+        var before = label.LastIndexOf(' ', mid);
+        var after = label.IndexOf(' ', mid);
+
+        var splitAt = 0; // initialised explicitly; set in every branch below
+        if (before < 0 && after < 0) return [label];        // No spaces — can't wrap.
+        else if (before < 0) splitAt = after;
+        else if (after < 0) splitAt = before;
+        else splitAt = (mid - before) <= (after - mid) ? before : after;
+
+        return [label[..splitAt], label[(splitAt + 1)..].TrimStart()];
+    }
+
+    private static string Esc(string s) =>
+        // SecurityElement.Escape handles <, >, &, ', ".
+        // Backslash is also escaped as &#92; to prevent \< from being treated as a
+        // Markdown backslash-escape when the SVG is embedded in a Markdown document.
+        // The Replace must run AFTER SecurityElement.Escape so that the & in &#92;
+        // is not itself XML-escaped into &amp;#92; (which would render as the literal
+        // text "&#92;" rather than as a backslash character).
+        (System.Security.SecurityElement.Escape(s) ?? string.Empty).Replace("\\", "&#92;");
 
     #endregion
 }
