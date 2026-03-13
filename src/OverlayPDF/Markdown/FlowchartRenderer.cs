@@ -378,12 +378,15 @@ public partial class FlowchartRenderer
         }
 
         var horiz = model.Direction is FlowDir.LR or FlowDir.RL;
-        double primary = SvgMargin;
+        // When subgraphs are present their title label extends SubgraphPad + SubgraphLabelHeight
+        // above the top of the nodes inside them. Add this extra offset so the label stays visible.
+        var subgraphTopMargin = model.Subgraphs.Count > 0 ? SubgraphPad + SubgraphLabelHeight : 0;
+        double primary = SvgMargin + (horiz ? 0 : subgraphTopMargin);
 
         foreach (var layer in layers)
         {
             var nodes = layer.OrderBy(n => n.Order).ToList();
-            double secondary = SvgMargin;
+            double secondary = SvgMargin + (horiz ? subgraphTopMargin : 0);
             double maxPrimary = 0;
 
             foreach (var n in nodes)

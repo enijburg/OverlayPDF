@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Text.RegularExpressions;
 using OverlayPDF.Markdown;
 using Xunit;
 
@@ -309,5 +311,153 @@ public class FlowchartRendererTests
     {
         Assert.True(FlowchartRenderer.CanRender("Flowchart LR\n    A --> B"));
         Assert.True(FlowchartRenderer.CanRender("FLOWCHART TD\n    A --> B"));
+    }
+
+    [Fact]
+    public void RenderToSvg_SubgraphLabel_IsNotClipped()
+    {
+        // Regression test: subgraph title labels used to extend above y=0,
+        // making them invisible because the SVG viewBox started at y=0.
+        var renderer = new FlowchartRenderer();
+        var definition = """
+            flowchart TD
+                subgraph Configuration File
+                    direction TB
+                    A[Node A]
+                    B[Node B]
+                end
+                A --> B
+            """;
+
+        var result = renderer.RenderToSvg(definition);
+
+        Assert.Contains("<svg", result);
+        Assert.Contains("Configuration File", result);
+
+        Assert.True(TryFindSubgraphRectY(result, out var yValue),
+            "Subgraph background rect not found in SVG output.");
+        Assert.True(yValue >= 0,
+            $"Subgraph rect y={yValue} is negative – the title label would be clipped by the SVG viewport.");
+    }
+
+    [Fact]
+    public void RenderToSvg_SubgraphLabel_InLrLayout_IsNotClipped()
+    {
+        // Same regression check for left-to-right layouts with subgraphs.
+        var renderer = new FlowchartRenderer();
+        var definition = """
+            flowchart LR
+                subgraph My Group
+                    A[Node A]
+                    B[Node B]
+                end
+                A --> B
+            """;
+
+        var result = renderer.RenderToSvg(definition);
+
+        Assert.True(TryFindSubgraphRectY(result, out var yValue),
+            "Subgraph background rect not found in SVG output.");
+        Assert.True(yValue >= 0,
+            $"Subgraph rect y={yValue} is negative – the title label would be clipped by the SVG viewport.");
+    }
+
+    /// <summary>
+    /// Parses the y-coordinate of the subgraph background rect from an SVG string.
+    /// The subgraph rect is identified by its <c>stroke-dasharray="6 3"</c> border style.
+    /// </summary>
+    private static bool TryFindSubgraphRectY(string svg, out double yValue)
+    {
+        yValue = 0;
+        var m = Regex.Match(svg, @"<rect[^>]+y=""(-?[\d.]+)""[^>]+stroke-dasharray=""6 3""");
+        if (!m.Success)
+            m = Regex.Match(svg, @"<rect[^>]+stroke-dasharray=""6 3""[^>]+y=""(-?[\d.]+)""");
+        if (!m.Success)
+            return false;
+        yValue = double.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture);
+        return true;
+    }
+
+    [Fact]
+    public void RenderToSvg_FullPipelineFlow_GeneratesValidSvg()
+    {
+        // Diagram 1 from the issue: simple LR pipeline with all five styled nodes.
+        var renderer = new FlowchartRenderer();
+        var definition = """
+            flowchart LR
+                A[Source] --> B[Conversion]
+                B --> C[Validation]
+                C --> D[Destination]
+                D --> E[Finalizers]
+
+                style A fill:#4A90D9,color:#fff
+                style B fill:#F5A623,color:#fff
+                style C fill:#7B68EE,color:#fff
+                style D fill:#50C878,color:#fff
+                style E fill:#CD5C5C,color:#fff
+            """;
+
+        var result = renderer.RenderToSvg(definition);
+
+        Assert.Contains("<svg", result);
+        Assert.Contains("</svg>", result);
+        Assert.Contains("Source", result);
+        Assert.Contains("Conversion", result);
+        Assert.Contains("Validation", result);
+        Assert.Contains("Destination", result);
+        Assert.Contains("Finalizers", result);
+        Assert.Contains("#4A90D9", result);
+        Assert.Contains("#F5A623", result);
+        Assert.Contains("#7B68EE", result);
+        Assert.Contains("#50C878", result);
+        Assert.Contains("#CD5C5C", result);
+        // All five nodes are present as rect elements
+        Assert.Equal(5, Regex.Matches(result, @"<rect[^>]+rx=""4""").Count);
+    }
+
+    [Fact]
+    public void RenderToSvg_FullExtractorPluginDiagram_GeneratesValidSvg()
+    {
+        // Diagram 3 from the issue: Extractor.exe with built-in modules and plugins.
+        var renderer = new FlowchartRenderer();
+        var definition = """
+            flowchart TD
+                EXE[Extractor.exe] -->|loads| CORE[Built-in Modules]
+                EXE -->|loads| P1[Plugin: Excel Source]
+                EXE -->|loads| P2[Plugin: OnGuard Validation]
+                EXE -->|loads| P3[Plugin: Custom Conversion]
+
+                CORE --> SRC_DB[database]
+                CORE --> SRC_FILE[file]
+                CORE --> SRC_CSV[csv]
+                CORE --> SRC_XML[xml]
+                CORE --> CONV_XML[xml]
+                CORE --> CONV_CSV[csv]
+                CORE --> CONV_XSLT[xslt]
+                CORE --> CONV_ZIP[zip]
+                CORE --> DEST_FLD[folder]
+                CORE --> DEST_FTP[ftp]
+                CORE --> DEST_MAIL[mail]
+
+                style EXE fill:#4A90D9,color:#fff
+            """;
+
+        var result = renderer.RenderToSvg(definition);
+
+        Assert.Contains("<svg", result);
+        Assert.Contains("</svg>", result);
+        Assert.Contains("Extractor.exe", result);
+        Assert.Contains("Built-in Modules", result);
+        Assert.Contains("Plugin: Excel Source", result);
+        Assert.Contains("Plugin: OnGuard Validation", result);
+        Assert.Contains("Plugin: Custom Conversion", result);
+        Assert.Contains("database", result);
+        Assert.Contains("xslt", result);
+        Assert.Contains("folder", result);
+        Assert.Contains("#4A90D9", result);
+        // Three layers: EXE, CORE+Plugins, leaf nodes
+        Assert.Contains("marker-end=\"url(#fc-arrow)\"", result);
+        // Edge labels are rendered
+        Assert.Contains("loads", result);
     }
 }
