@@ -14,6 +14,7 @@ using Markdig.Syntax;
 using Markdig.Syntax.Inlines;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using OverlayPDF.Utilities;
 using Path = System.IO.Path;
 
 namespace OverlayPDF.Markdown;
@@ -81,6 +82,11 @@ public class PdfGenerator(IOptions<PdfOverlayOptions> options, MarkdownProcessor
                 // Add template as background (before content)
                 var canvas = new PdfCanvas(importedPage.NewContentStreamBefore(), importedPage.GetResources(), outputPdfDoc);
                 canvas.AddXObjectAt(templateXObject, 0, 0);
+
+                // Add page number on non-first pages if configured
+                if (!useFirstTemplate && _overlayOptions.AddPageNumbers)
+                    PdfPageRenderer.AddPageNumber(outputPdfDoc, importedPage, i, _overlayOptions.PageNumberAlignment,
+                        _overlayOptions.LeftMarginPoints, _overlayOptions.RightMarginPoints);
 
                 logger.LogInformation("Applied template to page {Page}: {Template}", i, appliedTemplatePath);
             }
