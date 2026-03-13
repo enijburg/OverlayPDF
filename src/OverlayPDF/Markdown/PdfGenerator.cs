@@ -85,7 +85,8 @@ public class PdfGenerator(IOptions<PdfOverlayOptions> options, MarkdownProcessor
 
                 // Add page number on non-first pages if configured
                 if (!useFirstTemplate && _overlayOptions.AddPageNumbers)
-                    PdfPageRenderer.AddPageNumber(outputPdfDoc, importedPage, i);
+                    PdfPageRenderer.AddPageNumber(outputPdfDoc, importedPage, i, _overlayOptions.PageNumberAlignment,
+                        _overlayOptions.LeftMarginPoints, _overlayOptions.RightMarginPoints);
 
                 logger.LogInformation("Applied template to page {Page}: {Template}", i, appliedTemplatePath);
             }

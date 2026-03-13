@@ -111,7 +111,8 @@ public class PdfMerger(ILogger<PdfMerger> logger, IOptions<PdfOverlayOptions> op
 
             // Add page number on non-first pages if configured
             if (!useFirstTemplate && _overlayOptions.AddPageNumbers)
-                PdfPageRenderer.AddPageNumber(outputPdfDoc, newPage, i);
+                PdfPageRenderer.AddPageNumber(outputPdfDoc, newPage, i, _overlayOptions.PageNumberAlignment,
+                    _overlayOptions.LeftMarginPoints, _overlayOptions.RightMarginPoints);
         }
     }
 }

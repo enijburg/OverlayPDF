@@ -145,6 +145,84 @@ public class PdfPageNumberTests
         }
     }
 
+    [Theory]
+    [InlineData(PageNumberAlignment.Left)]
+    [InlineData(PageNumberAlignment.Center)]
+    [InlineData(PageNumberAlignment.Right)]
+    public void GeneratePdfFromMarkdownWithTemplates_AddPageNumbers_AllAlignmentsProducePageNumber(
+        PageNumberAlignment alignment)
+    {
+        var (markdownPath, outputPdfPath, firstTemplatePath, contTemplatePath) =
+            CreateTempPaths($"align_{alignment}");
+        File.WriteAllText(markdownPath, MultiPageMarkdown);
+        CreateMinimalTemplatePdf(firstTemplatePath);
+        CreateMinimalTemplatePdf(contTemplatePath);
+
+        try
+        {
+            CreatePdfGenerator(addPageNumbers: true, alignment)
+                .GeneratePdfFromMarkdownWithTemplates(markdownPath, outputPdfPath, firstTemplatePath, contTemplatePath);
+
+            Assert.True(File.Exists(outputPdfPath), "Output PDF should be created");
+
+            using var pdfDoc = new PdfDocument(new PdfReader(outputPdfPath));
+            Assert.True(pdfDoc.GetNumberOfPages() >= 2, "PDF should have at least 2 pages");
+
+            // Page number "2" must appear on page 2 regardless of alignment.
+            var page2Text = PdfTextExtractor.GetTextFromPage(pdfDoc.GetPage(2)).Trim();
+            var tokens = page2Text.Split([' ', '\n', '\r', '\t'], StringSplitOptions.RemoveEmptyEntries);
+            Assert.Contains("2", tokens);
+        }
+        finally
+        {
+            Cleanup(markdownPath, outputPdfPath, firstTemplatePath, contTemplatePath);
+        }
+    }
+
+    [Fact]
+    public void GeneratePdfFromMarkdownWithTemplates_DifferentAlignments_ProduceDifferentXPositions()
+    {
+        var (markdownPath, leftPdfPath, firstTemplatePath, contTemplatePath) = CreateTempPaths("align_cmp_left");
+        var centerPdfPath = leftPdfPath.Replace("align_cmp_left", "align_cmp_center");
+        var rightPdfPath  = leftPdfPath.Replace("align_cmp_left", "align_cmp_right");
+
+        File.WriteAllText(markdownPath, MultiPageMarkdown);
+        CreateMinimalTemplatePdf(firstTemplatePath);
+        CreateMinimalTemplatePdf(contTemplatePath);
+
+        try
+        {
+            CreatePdfGenerator(addPageNumbers: true, PageNumberAlignment.Left)
+                .GeneratePdfFromMarkdownWithTemplates(markdownPath, leftPdfPath, firstTemplatePath, contTemplatePath);
+            CreatePdfGenerator(addPageNumbers: true, PageNumberAlignment.Center)
+                .GeneratePdfFromMarkdownWithTemplates(markdownPath, centerPdfPath, firstTemplatePath, contTemplatePath);
+            CreatePdfGenerator(addPageNumbers: true, PageNumberAlignment.Right)
+                .GeneratePdfFromMarkdownWithTemplates(markdownPath, rightPdfPath, firstTemplatePath, contTemplatePath);
+
+            using var leftDoc   = new PdfDocument(new PdfReader(leftPdfPath));
+            using var centerDoc = new PdfDocument(new PdfReader(centerPdfPath));
+            using var rightDoc  = new PdfDocument(new PdfReader(rightPdfPath));
+
+            var leftX   = GetPageNumberXPosition(leftDoc.GetPage(2));
+            var centerX = GetPageNumberXPosition(centerDoc.GetPage(2));
+            var rightX  = GetPageNumberXPosition(rightDoc.GetPage(2));
+
+            Assert.NotNull(leftX);
+            Assert.NotNull(centerX);
+            Assert.NotNull(rightX);
+
+            // Left < Center < Right
+            Assert.True(leftX.Value < centerX.Value,
+                $"Left ({leftX}) should be less than Center ({centerX})");
+            Assert.True(centerX.Value < rightX.Value,
+                $"Center ({centerX}) should be less than Right ({rightX})");
+        }
+        finally
+        {
+            Cleanup(markdownPath, leftPdfPath, centerPdfPath, rightPdfPath, firstTemplatePath, contTemplatePath);
+        }
+    }
+
     // ── helpers ─────────────────────────────────────────────────────────────
 
     private static (string markdownPath, string outputPdfPath, string firstTemplatePath, string contTemplatePath)
@@ -175,7 +253,8 @@ public class PdfPageNumberTests
                 File.Delete(path);
     }
 
-    private static PdfGenerator CreatePdfGenerator(bool addPageNumbers)
+    private static PdfGenerator CreatePdfGenerator(bool addPageNumbers,
+        PageNumberAlignment alignment = PageNumberAlignment.Center)
     {
         var options = Options.Create(new PdfOverlayOptions
         {
@@ -184,7 +263,8 @@ public class PdfPageNumberTests
             FontsDirectory = null,
             FirstPageTemplate = "dummy.pdf",
             ContinuationPageTemplate = "dummy.pdf",
-            AddPageNumbers = addPageNumbers
+            AddPageNumbers = addPageNumbers,
+            PageNumberAlignment = alignment
         });
 
         var loggerFactory = LoggerFactory.Create(builder => builder.AddConsole());
@@ -196,5 +276,17 @@ public class PdfPageNumberTests
             mermaidRenderer);
 
         return new PdfGenerator(options, markdownProcessor, loggerFactory.CreateLogger<PdfGenerator>());
+    }
+
+    /// <summary>
+    /// Extracts the x-coordinate of the page number text at the bottom of the page.
+    /// Returns null if no text is found near the expected page number y-position.
+    /// </summary>
+    private static float? GetPageNumberXPosition(PdfPage page)
+    {
+        var strategy = new TextPositionStrategy();
+        var processor = new PdfCanvasProcessor(strategy);
+        processor.ProcessPageContent(page);
+        return strategy.X;
     }
 }
