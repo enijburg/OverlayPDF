@@ -21,6 +21,21 @@ public partial class MarkdownProcessor(TimelineRenderer timelineRenderer, Signat
     [GeneratedRegex(@"(?m)^[ \t]*-{4,}[ \t]*(?:\n|$)", RegexOptions.Multiline | RegexOptions.CultureInvariant)]
     private static partial Regex HorizontalRuleRegex();
 
+    // Matches any remaining fenced code block (language tag is optional).
+    // Special blocks (signatures, timeline, mermaid) must be processed before this regex is applied.
+    [GeneratedRegex(@"(?s)```([^\n`]*)\n(.*?)```", RegexOptions.Multiline)]
+    private static partial Regex FencedCodeBlockRegex();
+
+    // Maximum characters per line inside a code block.
+    // Based on A4 (595pt), body margin 30px ≈ 22.5pt each side, pre padding 10px ≈ 7.5pt each side,
+    // and Courier 9pt where each character is ~5.4pt wide: (595 - 45 - 15) / 5.4 ≈ 99 chars.
+    private const int CodeBlockMaxLineChars = 95;
+
+    // Unicode "DOWNWARDS ARROW WITH CORNER LEFTWARDS" (↵) followed by a space.
+    // Prepended to each continuation line when a code block line is wrapped.
+    private const string ContinuationMarker = "\u21B5 ";
+    private const int ContinuationMarkerLength = 2; // Length of ContinuationMarker string
+
     /// <summary>
     /// Processes markdown content by replacing placeholders and transforming special blocks.
     /// </summary>
@@ -84,6 +99,10 @@ public partial class MarkdownProcessor(TimelineRenderer timelineRenderer, Signat
             result,
             "<div style=\"page-break-after: always;\"></div>\n");
 
+        // Wrap long lines in regular code blocks and add a continuation marker so that
+        // the wrapped part is visually distinguishable.
+        result = WrapCodeBlockLines(result);
+
         // Restore platform newline if needed
         if (Environment.NewLine != "\n")
         {
@@ -91,6 +110,61 @@ public partial class MarkdownProcessor(TimelineRenderer timelineRenderer, Signat
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Finds all fenced code blocks in <paramref name="markdown"/> and wraps lines that exceed
+    /// <see cref="CodeBlockMaxLineChars"/> characters. Each continuation line is prefixed with
+    /// <see cref="ContinuationMarker"/> so that wrapped text is visually distinguishable in the PDF.
+    /// </summary>
+    private static string WrapCodeBlockLines(string markdown)
+    {
+        return FencedCodeBlockRegex().Replace(markdown, match =>
+        {
+            var language = match.Groups[1].Value;
+            var content = match.Groups[2].Value;
+
+            var lines = content.Split('\n');
+            var sb = new StringBuilder();
+
+            // Width available for continuation lines after prepending the marker
+            var contWidth = CodeBlockMaxLineChars - ContinuationMarkerLength;
+
+            for (var i = 0; i < lines.Length; i++)
+            {
+                var line = lines[i];
+
+                // Skip the final empty element produced by a trailing '\n' in the content
+                if (i == lines.Length - 1 && string.IsNullOrEmpty(line))
+                    break;
+
+                if (line.Length <= CodeBlockMaxLineChars)
+                {
+                    sb.Append(line);
+                    sb.Append('\n');
+                }
+                else
+                {
+                    // Emit the first chunk at full width
+                    sb.Append(line[..CodeBlockMaxLineChars]);
+                    sb.Append('\n');
+
+                    // Emit continuation chunks, each prefixed with the continuation marker
+                    var remaining = line[CodeBlockMaxLineChars..];
+
+                    while (remaining.Length > 0)
+                    {
+                        var chunkLen = Math.Min(contWidth, remaining.Length);
+                        sb.Append(ContinuationMarker);
+                        sb.Append(remaining[..chunkLen]);
+                        sb.Append('\n');
+                        remaining = remaining[chunkLen..];
+                    }
+                }
+            }
+
+            return $"```{language}\n{sb}```";
+        });
     }
 
     private static string ReplaceProblematicUnicodeCharacters(string text)
@@ -198,6 +272,9 @@ public partial class MarkdownProcessor(TimelineRenderer timelineRenderer, Signat
             0x2010 => true, // Hyphen
             0x2011 => true, // Non-breaking hyphen
             0x2012 => true, // Figure dash
+
+            // Code block continuation marker (↵ DOWNWARDS ARROW WITH CORNER LEFTWARDS)
+            0x21B5 => true,
 
             // Keep other characters for entity conversion
             _ => false

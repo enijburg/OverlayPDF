@@ -198,6 +198,31 @@ public class PdfGenerator(IOptions<PdfOverlayOptions> options, MarkdownProcessor
                               margin-top: 20px;
                           }
 
+                          /* Code blocks */
+                          pre {
+                              font-family: Courier, monospace;
+                              font-size: 9pt;
+                              background-color: #f5f5f5;
+                              border: 1px solid #e0e0e0;
+                              padding: 8px 10px;
+                              margin: 8px 0;
+                              white-space: pre-wrap;
+                              word-wrap: break-word;
+                          }
+
+                          code {
+                              font-family: Courier, monospace;
+                              font-size: 9pt;
+                              background-color: #f5f5f5;
+                              padding: 1px 4px;
+                          }
+
+                          pre code {
+                              background-color: transparent;
+                              padding: 0;
+                              border: none;
+                          }
+
                           /* Apply template margins via page rules */
                           @page {
                               margin-top: {{topMarginContinuation}}pt;
