@@ -177,12 +177,12 @@ public class PdfGenerator(IOptions<PdfOverlayOptions> options, MarkdownProcessor
                               vertical-align: top;
                           }
 
-                          /* Zebra striping – iText supports this only in this exact form */
+                          /* Zebra striping ï¿½ iText supports this only in this exact form */
                           tr.even td {
                               background-color: #f7f7f7;
                           }
 
-                          /* Totals row – iText friendly */
+                          /* Totals row ï¿½ iText friendly */
                           .total-row td {
                               font-weight: bold;
                               background-color: #f2f2f2;
@@ -194,6 +194,31 @@ public class PdfGenerator(IOptions<PdfOverlayOptions> options, MarkdownProcessor
                               font-size: 9pt;
                               color: #666;
                               margin-top: 20px;
+                          }
+
+                          /* Code blocks */
+                          pre {
+                              font-family: Courier, monospace;
+                              font-size: 9pt;
+                              background-color: #f5f5f5;
+                              border: 1px solid #e0e0e0;
+                              padding: 8px 10px;
+                              margin: 8px 0;
+                              white-space: pre-wrap;
+                              word-wrap: break-word;
+                          }
+
+                          code {
+                              font-family: Courier, monospace;
+                              font-size: 9pt;
+                              background-color: #f5f5f5;
+                              padding: 1px 4px;
+                          }
+
+                          pre code {
+                              background-color: transparent;
+                              padding: 0;
+                              border: none;
                           }
 
                           /* Apply template margins via page rules */
