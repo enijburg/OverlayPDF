@@ -23,10 +23,12 @@ public partial class FlowchartRenderer
     private const double SvgMargin = 30;
     private const double SubgraphPad = 24;
     private const double SubgraphLabelHeight = 22;
+    /// <summary>Y-radius of the top and bottom ellipse caps on a cylinder node.</summary>
+    private const double CylinderCapRadius = 12.0;
 
     #region Types
 
-    private enum NodeShape { Rectangle, RoundedRect, Diamond, Stadium, Subroutine, Circle, Asymmetric, Hexagon }
+    private enum NodeShape { Rectangle, RoundedRect, Diamond, Stadium, Subroutine, Circle, Asymmetric, Hexagon, Cylinder }
 
     private enum EdgeLine { Solid, Dashed, Thick }
 
@@ -279,11 +281,13 @@ public partial class FlowchartRenderer
 
         var rest = s[i..];
 
-        // Multi-character bracket patterns checked first
+        // Multi-character bracket patterns checked first (order matters: "[(..." must precede "[..."
+        // so that the cylinder syntax is not accidentally matched as a plain rectangle).
         if (rest.StartsWith("([") && rest.EndsWith("])")) return (id, rest[2..^2], NodeShape.Stadium);
         if (rest.StartsWith("[[") && rest.EndsWith("]]")) return (id, rest[2..^2], NodeShape.Subroutine);
         if (rest.StartsWith("((") && rest.EndsWith("))")) return (id, rest[2..^2], NodeShape.Circle);
         if (rest.StartsWith("{{") && rest.EndsWith("}}")) return (id, rest[2..^2], NodeShape.Hexagon);
+        if (rest.StartsWith("[(") && rest.EndsWith(")]")) return (id, rest[2..^2], NodeShape.Cylinder);
         if (rest.StartsWith('[') && rest.EndsWith(']')) return (id, rest[1..^1], NodeShape.Rectangle);
         if (rest.StartsWith('(') && rest.EndsWith(')')) return (id, rest[1..^1], NodeShape.RoundedRect);
         if (rest.StartsWith('{') && rest.EndsWith('}')) return (id, rest[1..^1], NodeShape.Diamond);
@@ -312,6 +316,11 @@ public partial class FlowchartRenderer
             {
                 n.W *= 1.4;
                 n.H *= 1.4;
+            }
+            else if (n.Shape == NodeShape.Cylinder)
+            {
+                // Extra height for the top and bottom ellipse caps (CylinderCapRadius each).
+                n.H += CylinderCapRadius * 2;
             }
         }
     }
@@ -562,6 +571,18 @@ public partial class FlowchartRenderer
                 sb.AppendLine(string.Create(CultureInfo.InvariantCulture,
                     $"<polygon points=\"{n.X:0.#},{n.Y:0.#} {n.X + n.W - 10:0.#},{n.Y:0.#} {n.X + n.W:0.#},{cy:0.#} {n.X + n.W - 10:0.#},{n.Y + n.H:0.#} {n.X:0.#},{n.Y + n.H:0.#}\" fill=\"{n.Fill}\" stroke=\"{n.Stroke}\" stroke-width=\"1.5\" />"));
                 break;
+            case NodeShape.Cylinder:
+            {
+                var ry = CylinderCapRadius; // y-radius of the top/bottom ellipse caps
+                var rx = n.W / 2;
+                // Body: left side down, bottom arc, right side up, top arc (back).
+                sb.AppendLine(string.Create(CultureInfo.InvariantCulture,
+                    $"<path d=\"M {n.X:0.#},{n.Y + ry:0.#} A {rx:0.#},{ry:0.#} 0 0,0 {n.X + n.W:0.#},{n.Y + ry:0.#} V {n.Y + n.H - ry:0.#} A {rx:0.#},{ry:0.#} 0 0,1 {n.X:0.#},{n.Y + n.H - ry:0.#} Z\" fill=\"{n.Fill}\" stroke=\"{n.Stroke}\" stroke-width=\"1.5\" />"));
+                // Top ellipse drawn last so it appears on top (gives the 3-D cap illusion).
+                sb.AppendLine(string.Create(CultureInfo.InvariantCulture,
+                    $"<ellipse cx=\"{cx:0.#}\" cy=\"{n.Y + ry:0.#}\" rx=\"{rx:0.#}\" ry=\"{ry:0.#}\" fill=\"{n.Fill}\" stroke=\"{n.Stroke}\" stroke-width=\"1.5\" />"));
+                break;
+            }
             default: // Rectangle
                 sb.AppendLine(string.Create(CultureInfo.InvariantCulture,
                     $"<rect x=\"{n.X:0.#}\" y=\"{n.Y:0.#}\" width=\"{n.W:0.#}\" height=\"{n.H:0.#}\" rx=\"4\" fill=\"{n.Fill}\" stroke=\"{n.Stroke}\" stroke-width=\"1.5\" />"));

@@ -370,8 +370,10 @@ public class FlowchartRendererTests
     {
         yValue = 0;
         // Use a lookahead so the two attributes can appear in any order.
+        // RegexOptions.Singleline allows [^>] to span newlines within a tag.
         var m = Regex.Match(svg,
-            @"<rect\b(?=[^>]*stroke-dasharray=""6 3"")[^>]*\by=""(-?[\d.]+)""");
+            @"<rect\b(?=[^>]*stroke-dasharray=""6 3"")[^>]*\by=""(-?[\d.]+)""",
+            RegexOptions.Singleline);
         if (!m.Success) return false;
         yValue = double.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture);
         return true;
@@ -432,10 +434,11 @@ public class FlowchartRendererTests
         var result = renderer.RenderToSvg(definition);
 
         // Collect all y-values of rect elements (node bodies) using attribute-order-independent pattern.
-        var yValues = Regex.Matches(result, @"<rect\b(?=[^>]*\brx=""4"")[^>]*>")
+        // RegexOptions.Singleline handles SVG tags that may span multiple lines.
+        var yValues = Regex.Matches(result, @"<rect\b(?=[^>]*\brx=""4"")[^>]*>", RegexOptions.Singleline)
             .Select(m =>
             {
-                var ym = Regex.Match(m.Value, @"\by=""([\d.]+)""");
+                var ym = Regex.Match(m.Value, @"\by=""([\d.]+)""", RegexOptions.Singleline);
                 return ym.Success ? double.Parse(ym.Groups[1].Value, CultureInfo.InvariantCulture) : -1;
             })
             .ToList();
@@ -463,12 +466,13 @@ public class FlowchartRendererTests
         var result = renderer.RenderToSvg(definition);
 
         // Collect all node rects (identified by rx="4") using attribute-order-independent patterns.
-        var allRects = Regex.Matches(result, @"<rect\b(?=[^>]*\brx=""4"")[^>]*>")
+        // RegexOptions.Singleline handles SVG tags that may span multiple lines.
+        var allRects = Regex.Matches(result, @"<rect\b(?=[^>]*\brx=""4"")[^>]*>", RegexOptions.Singleline)
             .Select(m =>
             {
                 double Attr(string name)
                 {
-                    var am = Regex.Match(m.Value, $@"\b{name}=""([\d.]+)""");
+                    var am = Regex.Match(m.Value, $@"\b{name}=""([\d.]+)""", RegexOptions.Singleline);
                     return am.Success ? double.Parse(am.Groups[1].Value, CultureInfo.InvariantCulture) : 0;
                 }
                 return (x: Attr("x"), y: Attr("y"), w: Attr("width"));
@@ -536,5 +540,74 @@ public class FlowchartRendererTests
         Assert.Contains("marker-end=\"url(#fc-arrow)\"", result);
         // Edge labels are rendered
         Assert.Contains("loads", result);
+    }
+
+    [Fact]
+    public void RenderToSvg_CylinderNode_UsesCylinderSvgPath()
+    {
+        // The [(..)] Mermaid syntax must produce a cylinder (path + ellipse), not a rectangle.
+        var renderer = new FlowchartRenderer();
+        var definition = """
+            flowchart LR
+                DB[(Database)]
+                APP[Application]
+                APP --> DB
+            """;
+
+        var result = renderer.RenderToSvg(definition);
+
+        Assert.Contains("<svg", result);
+        Assert.Contains("Database", result);
+        // Cylinder is rendered as a <path> element (body) and an <ellipse> (top cap).
+        Assert.Contains("<path ", result);
+        Assert.Contains("<ellipse ", result);
+        // The cylinder text must not contain stray parentheses from the [(..)] delimiters.
+        Assert.DoesNotContain("(Database)", result);
+    }
+
+    [Fact]
+    public void RenderToSvg_XsltDiagram_CylinderAndDiamondRendered()
+    {
+        // Full XSLT pipeline from the issue: verifies [(..)] cylinder and {..} diamond shapes.
+        var renderer = new FlowchartRenderer();
+        var definition = """
+            flowchart LR
+                SRC[Source Data] --> INT[Internal XML<br/>Representation]
+                INT --> LOAD[Load &amp; Compile<br/>Stylesheet]
+                XSL[(XSLT File<br/>on disk)] --> LOAD
+                SD[Static Data /<br/>Config Variables] --> PARAMS[XSLT Parameters]
+                LOAD --> TRANSFORM[XslCompiledTransform]
+                PARAMS --> TRANSFORM
+                INT --> TRANSFORM
+                TRANSFORM --> OUT{xsl:output method?}
+                OUT -->|xml| XML[.xml file]
+                OUT -->|html| HTML[.htm file]
+                OUT -->|text| TXT[.csv / .txt file]
+                XML --> DEST[Destination]
+                HTML --> DEST
+                TXT --> DEST
+
+                style XSL fill:#F5A623,color:#fff
+                style TRANSFORM fill:#4A90D9,color:#fff
+            """;
+
+        var result = renderer.RenderToSvg(definition);
+
+        Assert.Contains("<svg", result);
+        Assert.Contains("</svg>", result);
+        // Cylinder node
+        Assert.Contains("XSLT File", result);
+        Assert.Contains("<ellipse ", result);
+        Assert.Contains("<path ", result);
+        // Diamond node
+        Assert.Contains("xsl:output method?", result);
+        Assert.Contains("<polygon ", result);
+        // Colours applied
+        Assert.Contains("#F5A623", result);
+        Assert.Contains("#4A90D9", result);
+        // All plain rectangular nodes present
+        Assert.Contains("Source Data", result);
+        Assert.Contains("XslCompiledTransform", result);
+        Assert.Contains("Destination", result);
     }
 }
