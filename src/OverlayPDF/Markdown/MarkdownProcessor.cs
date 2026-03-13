@@ -6,7 +6,7 @@ namespace OverlayPDF.Markdown;
 /// <summary>
 /// Handles markdown preprocessing, placeholder replacement, and special block transformations.
 /// </summary>
-public partial class MarkdownProcessor(TimelineRenderer timelineRenderer, SignatureBlockRenderer signatureBlockRenderer)
+public partial class MarkdownProcessor(TimelineRenderer timelineRenderer, SignatureBlockRenderer signatureBlockRenderer, MermaidRenderer mermaidRenderer)
 {
     // Compiled regex patterns for better performance
     [GeneratedRegex(@"(?s)```signatures\s*(.*?)```", RegexOptions.Multiline)]
@@ -14,6 +14,9 @@ public partial class MarkdownProcessor(TimelineRenderer timelineRenderer, Signat
 
     [GeneratedRegex(@"(?s)```timeline\s*(.*?)```", RegexOptions.Multiline)]
     private static partial Regex TimelineBlockRegex();
+
+    [GeneratedRegex(@"(?s)```mermaid\s*(.*?)```", RegexOptions.Multiline)]
+    private static partial Regex MermaidBlockRegex();
 
     [GeneratedRegex(@"(?m)^[ \t]*-{4,}[ \t]*(?:\n|$)", RegexOptions.Multiline | RegexOptions.CultureInvariant)]
     private static partial Regex HorizontalRuleRegex();
@@ -59,6 +62,20 @@ public partial class MarkdownProcessor(TimelineRenderer timelineRenderer, Signat
             catch
             {
                 return "<pre>Failed to render timeline</pre>";
+            }
+        });
+
+        // Convert fenced ```mermaid blocks into inline SVG via the Mermaid CLI
+        result = MermaidBlockRegex().Replace(result, match =>
+        {
+            var content = match.Groups[1].Value;
+            try
+            {
+                return mermaidRenderer.RenderToSvg(content);
+            }
+            catch
+            {
+                return "<pre>Failed to render mermaid diagram</pre>";
             }
         });
 

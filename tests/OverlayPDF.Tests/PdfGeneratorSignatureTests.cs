@@ -377,9 +377,12 @@ Just normal content here.
 
         var timelineRenderer = new Markdown.TimelineRenderer();
         var signatureBlockRenderer = new SignatureBlockRenderer();
-        var markdownProcessor = new Markdown.MarkdownProcessor(timelineRenderer, signatureBlockRenderer);
 
         var loggerFactory = LoggerFactory.Create(builder => builder.AddConsole());
+        var flowchartRenderer = new FlowchartRenderer();
+        var mermaidRenderer = new MermaidRenderer(loggerFactory.CreateLogger<MermaidRenderer>(), flowchartRenderer);
+        var markdownProcessor = new Markdown.MarkdownProcessor(timelineRenderer, signatureBlockRenderer, mermaidRenderer);
+
         var logger = loggerFactory.CreateLogger<PdfGenerator>();
 
         return new PdfGenerator(options, markdownProcessor, logger);

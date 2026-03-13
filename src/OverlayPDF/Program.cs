@@ -96,6 +96,8 @@ else
 // and Singleton for stateless services
 builder.Services.AddSingleton<TimelineRenderer>();
 builder.Services.AddSingleton<SignatureBlockRenderer>();
+builder.Services.AddSingleton<FlowchartRenderer>();
+builder.Services.AddSingleton<MermaidRenderer>();
 builder.Services.AddSingleton<MarkdownProcessor>();
 builder.Services.AddTransient<PdfGenerator>();
 builder.Services.AddTransient<PdfMerger>();
