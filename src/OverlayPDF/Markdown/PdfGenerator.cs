@@ -72,6 +72,19 @@ public class PdfGenerator(IOptions<PdfOverlayOptions> options, MarkdownProcessor
 
                 logger.LogInformation("Applied template to page {Page}: {Template}", i, appliedTemplatePath);
             }
+
+            // Copy named destinations (e.g. heading anchors for TOC links) from the content PDF
+            // to the output PDF. CopyPagesTo copies page-level link annotations but does not
+            // propagate the document-level name tree, so GoTo actions would silently fail without this.
+            var srcNames = contentPdfDoc.GetCatalog().GetNameTree(PdfName.Dests).GetNames();
+            if (srcNames?.Count > 0)
+            {
+                var dstNameTree = outputPdfDoc.GetCatalog().GetNameTree(PdfName.Dests);
+                foreach (var (key, value) in srcNames)
+                    dstNameTree.AddEntry(key, value.CopyTo(outputPdfDoc));
+
+                logger.LogDebug("Copied {Count} named destination(s) to output PDF", srcNames.Count);
+            }
         }
         finally
         {
