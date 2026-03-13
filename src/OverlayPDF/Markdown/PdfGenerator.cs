@@ -268,6 +268,25 @@ public class PdfGenerator(IOptions<PdfOverlayOptions> options, MarkdownProcessor
 
         html = style + html;
 
+        // iText pdfHTML only creates named destinations (required for bookmarks and
+        // internal TOC links) for headings that are referenced by at least one
+        // <a href="#id"> link somewhere in the document.  Headings that have an id
+        // attribute but are not linked would otherwise produce no named destination,
+        // leaving all bookmark entries pointing to page 0.
+        //
+        // Injecting a hidden <div> with an empty anchor for every heading forces iText
+        // to create the destinations without adding any visible content or link
+        // annotations to the PDF (display:none suppresses layout).
+        var headings = ExtractHeadings(markdown);
+        if (headings.Count > 0)
+        {
+            var sb = new System.Text.StringBuilder("<div style=\"display:none\">");
+            foreach (var (_, _, id) in headings)
+                sb.Append($"<a href=\"#{id}\"></a>");
+            sb.Append("</div>");
+            html += sb.ToString();
+        }
+
         // Convert HTML to PDF using iText pdfHTML
         using var writer = new PdfWriter(outputPdfPath);
         using var pdf = new PdfDocument(writer);
@@ -318,14 +337,45 @@ public class PdfGenerator(IOptions<PdfOverlayOptions> options, MarkdownProcessor
 
         converterProperties.SetFontProvider(fontProvider);
 
-        // Add PDF bookmarks (outline) before conversion so the catalog entry exists
-        // in the document. The outline items use PdfStringDestination (named destinations)
-        // which are created by HtmlConverter from heading id attributes; PDF viewers
-        // resolve these names when the document is opened.
-        var headings = ExtractHeadings(markdown);
-        AddOutlines(pdf, headings);
-
         HtmlConverter.ConvertToPdf(html, pdf, converterProperties);
+        // pdf is now closed by HtmlConverter — named destinations exist in the file.
+
+        // Post-process: reopen the generated PDF and add bookmarks with explicit
+        // (page-based) destinations resolved from the populated names tree.
+        // Doing this after HtmlConverter ensures the names tree is fully populated,
+        // which is required to obtain correct page references for each heading.
+        if (headings.Count > 0)
+            AddOutlinesToExistingPdf(outputPdfPath, headings);
+    }
+
+    /// <summary>
+    /// Reopens a finished PDF, adds bookmark (outline) entries whose destinations are
+    /// resolved from the document's names tree, and writes back to the same path.
+    /// </summary>
+    private static void AddOutlinesToExistingPdf(string pdfPath,
+        IReadOnlyList<(int Level, string Text, string Id)> headings)
+    {
+        var tmpPath = pdfPath + ".outlines_tmp";
+        File.Move(pdfPath, tmpPath);
+        try
+        {
+            using var reader = new PdfReader(tmpPath);
+            using var writer = new PdfWriter(pdfPath);
+            using var doc = new PdfDocument(reader, writer);
+            AddOutlines(doc, headings);
+        }
+        catch
+        {
+            // Restore the original file if the post-processing step failed.
+            if (!File.Exists(pdfPath))
+                File.Move(tmpPath, pdfPath);
+            throw;
+        }
+        finally
+        {
+            if (File.Exists(tmpPath))
+                File.Delete(tmpPath);
+        }
     }
 
     /// <summary>
@@ -396,6 +446,11 @@ public class PdfGenerator(IOptions<PdfOverlayOptions> options, MarkdownProcessor
 
         var root = pdfDoc.GetOutlines(false);
 
+        // Build a lookup from heading-id → explicit destination (a PdfArray such as [pageRef /Fit])
+        // from the document's names tree.  Using explicit destinations guarantees correct page
+        // references; PdfStringDestination (a lazy name lookup) leaves all entries at page 0
+        // when the outline is written before HtmlConverter populates the names tree.
+        var namesTree = pdfDoc.GetCatalog().GetNameTree(PdfName.Dests).GetNames();
         // Maps heading level → the most-recently-added outline at that level so we can nest children.
         var parentsByLevel = new Dictionary<int, PdfOutline> { [0] = root };
 
@@ -408,7 +463,23 @@ public class PdfGenerator(IOptions<PdfOverlayOptions> options, MarkdownProcessor
 
             var parent = parentsByLevel.GetValueOrDefault(parentLevel, root);
             var outline = parent.AddOutline(text);
-            outline.AddDestination(new PdfStringDestination(id));
+
+            // Prefer an explicit destination resolved from the names tree.  This directly
+            // references the page object, so PDF viewers can navigate without resolving a
+            // string key.  Fall back to a string destination only when the entry is missing.
+            PdfObject? destObj = null;
+            if (namesTree != null)
+                foreach (var kvp in namesTree)
+                    if (string.Equals(kvp.Key.GetValue(), id, StringComparison.Ordinal))
+                    {
+                        destObj = kvp.Value;
+                        break;
+                    }
+
+            if (destObj != null)
+                outline.AddDestination(PdfDestination.MakeDestination(destObj));
+            else
+                outline.AddDestination(new PdfStringDestination(id));
 
             // Register this entry as the current parent for deeper levels and
             // remove any stale entries from previously-visited deeper levels.

@@ -1,5 +1,6 @@
 using iText.Kernel.Geom;
 using iText.Kernel.Pdf;
+using iText.Kernel.Pdf.Navigation;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using OverlayPDF.Markdown;
@@ -137,6 +138,11 @@ public class PdfGeneratorBookmarksTests
             {
                 var dest = outline.GetDestination();
                 Assert.NotNull(dest);
+
+                // Destinations must be explicit (PdfArray-backed) so they reference the
+                // correct page object directly.  A PdfString-backed destination leaves all
+                // bookmarks pointing to page 0, which is the bug this test guards against.
+                Assert.IsType<PdfExplicitDestination>(dest);
             }
         }
         finally
