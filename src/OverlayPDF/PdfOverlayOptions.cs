@@ -18,6 +18,12 @@ public record PdfOverlayOptions
     // Bottom margin (in points) to reserve on continuation pages so content does not touch footer
     public float ContinuationBottomMarginPoints { get; set; } = 36f;
 
+    // Left margin (in points) to apply to all pages so content has space from the left edge
+    public float LeftMarginPoints { get; set; } = 60f;
+
+    // Right margin (in points) to apply to all pages so content has space from the right edge
+    public float RightMarginPoints { get; set; } = 60f;
+
     // Optional directory with font files (TTF/OTF). If provided, these will be registered for pdfHTML.
     public string? FontsDirectory { get; set; }
 

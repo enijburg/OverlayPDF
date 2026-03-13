@@ -42,7 +42,9 @@ OverlayPDF is a .NET 10 application designed to overlay text PDFs with predefine
       "FirstPageTopMarginPoints": 0,
       "FirstPageBottomMarginPoints": 0,
       "ContinuationTopMarginPoints": 72,
-      "ContinuationBottomMarginPoints": 36
+      "ContinuationBottomMarginPoints": 36,
+      "LeftMarginPoints": 60,
+      "RightMarginPoints": 60
     },
     "template_2": {
       "TemplateDirectory": "C:\\Temp\\Templates",
@@ -52,7 +54,9 @@ OverlayPDF is a .NET 10 application designed to overlay text PDFs with predefine
       "FirstPageTopMarginPoints": 0,
       "FirstPageBottomMarginPoints": 0,
       "ContinuationTopMarginPoints": 72,
-      "ContinuationBottomMarginPoints": 36
+      "ContinuationBottomMarginPoints": 36,
+      "LeftMarginPoints": 60,
+      "RightMarginPoints": 60
     }
   }
 }
@@ -230,6 +234,7 @@ The application applies default styling to markdown content:
 - **Tables**: Styled with borders, zebra striping, and padding
 - **Code blocks**: Monospace font with background color
 - **Line height**: 1.45 for improved readability
+- **Left/Right Margins**: Configurable via `LeftMarginPoints` and `RightMarginPoints` in appsettings.json (default: 60pt each)
 
 ## The project uses the following libraries
 
