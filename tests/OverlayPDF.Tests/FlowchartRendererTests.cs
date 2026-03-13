@@ -369,11 +369,10 @@ public class FlowchartRendererTests
     private static bool TryFindSubgraphRectY(string svg, out double yValue)
     {
         yValue = 0;
-        var m = Regex.Match(svg, @"<rect[^>]+y=""(-?[\d.]+)""[^>]+stroke-dasharray=""6 3""");
-        if (!m.Success)
-            m = Regex.Match(svg, @"<rect[^>]+stroke-dasharray=""6 3""[^>]+y=""(-?[\d.]+)""");
-        if (!m.Success)
-            return false;
+        // Use a lookahead so the two attributes can appear in any order.
+        var m = Regex.Match(svg,
+            @"<rect\b(?=[^>]*stroke-dasharray=""6 3"")[^>]*\by=""(-?[\d.]+)""");
+        if (!m.Success) return false;
         yValue = double.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture);
         return true;
     }
@@ -413,6 +412,84 @@ public class FlowchartRendererTests
         Assert.Contains("#CD5C5C", result);
         // All five nodes are present as rect elements
         Assert.Equal(5, Regex.Matches(result, @"<rect[^>]+rx=""4""").Count);
+    }
+
+    [Fact]
+    public void RenderToSvg_LR_SingleNodeLayers_AllNodesShareSameY()
+    {
+        // In a LR diagram where every layer has exactly one node the centering
+        // offset is zero for every layer, so all nodes should share the same Y
+        // coordinate – i.e. they must be vertically aligned (same row).
+        var renderer = new FlowchartRenderer();
+        var definition = """
+            flowchart LR
+                A[Source] --> B[Conversion]
+                B --> C[Validation]
+                C --> D[Destination]
+                D --> E[Finalizers]
+            """;
+
+        var result = renderer.RenderToSvg(definition);
+
+        // Collect all y-values of rect elements (node bodies) using attribute-order-independent pattern.
+        var yValues = Regex.Matches(result, @"<rect\b(?=[^>]*\brx=""4"")[^>]*>")
+            .Select(m =>
+            {
+                var ym = Regex.Match(m.Value, @"\by=""([\d.]+)""");
+                return ym.Success ? double.Parse(ym.Groups[1].Value, CultureInfo.InvariantCulture) : -1;
+            })
+            .ToList();
+
+        Assert.Equal(5, yValues.Count);
+        // All five nodes must share the same Y (single-node layers → centering offset = 0).
+        Assert.All(yValues, y => Assert.Equal(yValues[0], y));
+    }
+
+    [Fact]
+    public void RenderToSvg_TD_SingleRootNode_IsCenteredOverWiderLeafLayer()
+    {
+        // When the root layer has one node and the leaf layer has many nodes,
+        // the root node's x-center should equal the leaf layer's x-center.
+        var renderer = new FlowchartRenderer();
+        var definition = """
+            flowchart TD
+                ROOT[Root]
+                ROOT --> A[Alpha]
+                ROOT --> B[Beta]
+                ROOT --> C[Gamma]
+                ROOT --> D[Delta]
+            """;
+
+        var result = renderer.RenderToSvg(definition);
+
+        // Collect all node rects (identified by rx="4") using attribute-order-independent patterns.
+        var allRects = Regex.Matches(result, @"<rect\b(?=[^>]*\brx=""4"")[^>]*>")
+            .Select(m =>
+            {
+                double Attr(string name)
+                {
+                    var am = Regex.Match(m.Value, $@"\b{name}=""([\d.]+)""");
+                    return am.Success ? double.Parse(am.Groups[1].Value, CultureInfo.InvariantCulture) : 0;
+                }
+                return (x: Attr("x"), y: Attr("y"), w: Attr("width"));
+            })
+            .ToList();
+
+        Assert.True(allRects.Count == 5, $"Expected 5 node rects, got {allRects.Count}");
+
+        // The root node is the one at the smallest y value (layer 0 in TD layout).
+        var rootRect = allRects.OrderBy(r => r.y).First();
+        var rootCx = rootRect.x + rootRect.w / 2;
+
+        // Leaf nodes (layer 1, larger y) – compute their collective centre.
+        var leafRects = allRects.OrderBy(r => r.y).Skip(1).ToList();
+        var leafLeft  = leafRects.Min(r => r.x);
+        var leafRight = leafRects.Max(r => r.x + r.w);
+        var leafCx = (leafLeft + leafRight) / 2;
+
+        // Root centre should be within 2 px of the leaf-layer centre.
+        Assert.True(Math.Abs(rootCx - leafCx) < 2,
+            $"Root centre x={rootCx:0.#} but leaf layer centre x={leafCx:0.#} – root is not centred.");
     }
 
     [Fact]

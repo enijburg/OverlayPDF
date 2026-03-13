@@ -383,10 +383,25 @@ public partial class FlowchartRenderer
         var subgraphTopMargin = model.Subgraphs.Count > 0 ? SubgraphPad + SubgraphLabelHeight : 0;
         double primary = SvgMargin + (horiz ? 0 : subgraphTopMargin);
 
-        foreach (var layer in layers)
+        // Pre-compute the total secondary span (x-width for TD, y-height for LR) of every layer
+        // so that narrower layers can be centered relative to the widest one.
+        var layerNodes = layers
+            .Select(g => g.OrderBy(n => n.Order).ToList())
+            .ToList();
+        var layerSpans = layerNodes
+            .Select(nodes => nodes.Count == 0
+                ? 0.0
+                : nodes.Sum(n => horiz ? n.H : n.W) + NodeSpacing * (nodes.Count - 1))
+            .ToList();
+        var maxSpan = layerSpans.Count > 0 ? layerSpans.Max() : 0;
+
+        for (var li = 0; li < layerNodes.Count; li++)
         {
-            var nodes = layer.OrderBy(n => n.Order).ToList();
-            double secondary = SvgMargin + (horiz ? subgraphTopMargin : 0);
+            var nodes = layerNodes[li];
+            // Center this layer within the widest layer.
+            double secondary = SvgMargin
+                + (horiz ? subgraphTopMargin : 0)
+                + (maxSpan - layerSpans[li]) / 2;
             double maxPrimary = 0;
 
             foreach (var n in nodes)
