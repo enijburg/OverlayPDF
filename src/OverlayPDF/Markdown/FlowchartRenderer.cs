@@ -25,6 +25,14 @@ public partial class FlowchartRenderer
     private const double SubgraphLabelHeight = 22;
     /// <summary>Y-radius of the top and bottom ellipse caps on a cylinder node.</summary>
     private const double CylinderCapRadius = 12.0;
+    /// <summary>Font size used for edge labels.</summary>
+    private const double EdgeLabelFontSize = 11;
+    /// <summary>Line height for multi-line edge labels.</summary>
+    private const double EdgeLabelLineHeight = 14;
+    /// <summary>Approximate character width at <see cref="EdgeLabelFontSize"/>.</summary>
+    private const double EdgeLabelCharWidth = CharWidth * EdgeLabelFontSize / FontSize;
+    /// <summary>Maximum characters per line before an edge label is word-wrapped.</summary>
+    private const int EdgeLabelWrapChars = 22;
 
     #region Types
 
@@ -513,7 +521,7 @@ public partial class FlowchartRenderer
                 $"<text x=\"{rx + 8:0.#}\" y=\"{ry + 16:0.#}\" class=\"fc-text\" fill=\"#666\" font-weight=\"bold\">{Esc(sg.Title)}</text>"));
         }
 
-        // Edges (rendered before nodes so nodes draw on top)
+        // Edges paths (rendered before nodes so nodes draw on top of arrow ends)
         var horiz = model.Direction is FlowDir.LR or FlowDir.RL;
         foreach (var edge in model.Edges)
         {
@@ -526,6 +534,15 @@ public partial class FlowchartRenderer
         // Nodes
         foreach (var node in model.Nodes.Values)
             AppendNode(sb, node);
+
+        // Edge labels (rendered after nodes so they appear on top of node fills)
+        foreach (var edge in model.Edges)
+        {
+            if (!model.Nodes.TryGetValue(edge.From, out var src) ||
+                !model.Nodes.TryGetValue(edge.To, out var dst))
+                continue;
+            AppendEdgeLabel(sb, src, dst, edge, horiz);
+        }
 
         sb.AppendLine("</svg>");
         return sb.ToString();
@@ -636,21 +653,85 @@ public partial class FlowchartRenderer
 
         sb.AppendLine(string.Create(CultureInfo.InvariantCulture,
             $"<path d=\"M{x1:0.#},{y1:0.#} C{cx1:0.#},{cy1:0.#} {cx2:0.#},{cy2:0.#} {x2:0.#},{y2:0.#}\" fill=\"none\" stroke=\"#555\" stroke-width=\"{sw}\"{dash}{marker} />"));
+    }
 
-        // Edge label with background
-        if (!string.IsNullOrWhiteSpace(edge.Label))
+    private static void AppendEdgeLabel(StringBuilder sb, FlowNode src, FlowNode dst, FlowEdge edge, bool horiz)
+    {
+        if (string.IsNullOrWhiteSpace(edge.Label)) return;
+
+        var srcCx = src.X + src.W / 2;
+        var srcCy = src.Y + src.H / 2;
+        var dstCx = dst.X + dst.W / 2;
+        var dstCy = dst.Y + dst.H / 2;
+
+        double x1, y1, x2, y2;
+        if (horiz)
         {
-            var lx = (x1 + x2) / 2;
-            var ly = (y1 + y2) / 2 - 4;
-            var lw = edge.Label.Length * CharWidth + 12;
+            if (srcCx <= dstCx)
+            { x1 = src.X + src.W; y1 = srcCy; x2 = dst.X; y2 = dstCy; }
+            else
+            { x1 = src.X; y1 = srcCy; x2 = dst.X + dst.W; y2 = dstCy; }
+        }
+        else
+        {
+            if (srcCy <= dstCy)
+            { x1 = srcCx; y1 = src.Y + src.H; x2 = dstCx; y2 = dst.Y; }
+            else
+            { x1 = srcCx; y1 = src.Y; x2 = dstCx; y2 = dst.Y + dst.H; }
+        }
+
+        var lx = (x1 + x2) / 2;
+        var lcy = (y1 + y2) / 2 - 4;  // vertical centre of the label block
+
+        var lines = WrapEdgeLabel(edge.Label);
+        var maxLineLen = lines.Max(l => l.Length);
+        var lw = maxLineLen * EdgeLabelCharWidth + 12;
+        var lh = (lines.Length - 1) * EdgeLabelLineHeight + 18;
+
+        // Background rect centred on lcy
+        sb.AppendLine(string.Create(CultureInfo.InvariantCulture,
+            $"<rect x=\"{lx - lw / 2:0.#}\" y=\"{lcy - lh / 2:0.#}\" width=\"{lw:0.#}\" height=\"{lh:0.#}\" rx=\"3\" fill=\"#fff\" stroke=\"#ccc\" stroke-width=\"1\" />"));
+
+        // Text lines: baseline of first line above centre, evenly spaced downward
+        var firstBaseline = lcy - (lines.Length - 1) * EdgeLabelLineHeight / 2.0 + EdgeLabelFontSize * 0.6;
+        for (var li = 0; li < lines.Length; li++)
+        {
             sb.AppendLine(string.Create(CultureInfo.InvariantCulture,
-                $"<rect x=\"{lx - lw / 2:0.#}\" y=\"{ly - 12:0.#}\" width=\"{lw:0.#}\" height=\"18\" rx=\"3\" fill=\"#fff\" stroke=\"#ccc\" stroke-width=\"1\" />"));
-            sb.AppendLine(string.Create(CultureInfo.InvariantCulture,
-                $"<text x=\"{lx:0.#}\" y=\"{ly + 2:0.#}\" text-anchor=\"middle\" font-size=\"11\" fill=\"#555\">{Esc(edge.Label)}</text>"));
+                $"<text x=\"{lx:0.#}\" y=\"{firstBaseline + li * EdgeLabelLineHeight:0.#}\" text-anchor=\"middle\" font-size=\"{EdgeLabelFontSize:0}\" fill=\"#555\">{Esc(lines[li])}</text>"));
         }
     }
 
-    private static string Esc(string s) => System.Security.SecurityElement.Escape(s) ?? string.Empty;
+    /// <summary>
+    /// Splits an edge label into multiple lines at word boundaries when it
+    /// exceeds <see cref="EdgeLabelWrapChars"/> characters per line.
+    /// </summary>
+    private static string[] WrapEdgeLabel(string label)
+    {
+        if (label.Length <= EdgeLabelWrapChars)
+            return [label];
+
+        // Find the space nearest to the string midpoint and split there.
+        var mid = label.Length / 2;
+        var before = label.LastIndexOf(' ', mid);
+        var after = label.IndexOf(' ', mid);
+
+        int splitAt;
+        if (before < 0 && after < 0) return [label];        // No spaces — can't wrap.
+        else if (before < 0) splitAt = after;
+        else if (after < 0) splitAt = before;
+        else splitAt = (mid - before) <= (after - mid) ? before : after;
+
+        return [label[..splitAt], label[(splitAt + 1)..].TrimStart()];
+    }
+
+    private static string Esc(string s) =>
+        // SecurityElement.Escape handles <, >, &, ', ".
+        // Backslash is also escaped as &#92; to prevent \< from being treated as a
+        // Markdown backslash-escape when the SVG is embedded in a Markdown document.
+        // The Replace must run AFTER SecurityElement.Escape so that the & in &#92;
+        // is not itself XML-escaped into &amp;#92; (which would render as the literal
+        // text "&#92;" rather than as a backslash character).
+        (System.Security.SecurityElement.Escape(s) ?? string.Empty).Replace("\\", "&#92;");
 
     #endregion
 }

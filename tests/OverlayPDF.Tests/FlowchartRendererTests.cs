@@ -610,4 +610,119 @@ public class FlowchartRendererTests
         Assert.Contains("XslCompiledTransform", result);
         Assert.Contains("Destination", result);
     }
+
+    [Fact]
+    public void RenderToSvg_NodeTextWithBackslash_EscapedAsXmlEntity()
+    {
+        // Backslashes in node text must be rendered as &#92; so that \< is never
+        // produced in SVG text content, which would be treated as a Markdown
+        // backslash-escape and cause the </text> closing tag to appear as visible text.
+        var renderer = new FlowchartRenderer();
+        var definition = """
+            flowchart LR
+                A[(C:\Stylesheets\)] --> B[output\reports\]
+            """;
+
+        var result = renderer.RenderToSvg(definition);
+
+        Assert.Contains("<svg", result);
+        // Backslash must be present as XML entity, not as a raw character.
+        Assert.Contains("&#92;", result);
+        // The text content must not contain a raw backslash followed immediately by
+        // the SVG closing tag (which would be misinterpreted as \< Markdown escape).
+        Assert.DoesNotMatch(@"\\</text>", result);
+    }
+
+    [Fact]
+    public void RenderToSvg_LongEdgeLabel_IsWordWrapped()
+    {
+        // Edge labels longer than EdgeLabelWrapChars should be split at a word boundary
+        // so they don't overflow into adjacent nodes and get hidden by node fills.
+        var renderer = new FlowchartRenderer();
+        var definition = """
+            flowchart LR
+                SRC[Source] -->|DataReader → DataSet → XML| DEST[Destination]
+            """;
+
+        var result = renderer.RenderToSvg(definition);
+
+        Assert.Contains("<svg", result);
+        // The full label text must be present (split across two <text> elements).
+        Assert.Contains("DataReader", result);
+        Assert.Contains("DataSet", result);
+        Assert.Contains("XML", result);
+        // The label must NOT appear as a single unbroken text line (it should be
+        // split since "DataReader → DataSet → XML" is 26 chars > EdgeLabelWrapChars=22).
+        Assert.DoesNotContain(">DataReader → DataSet → XML<", result);
+    }
+
+    [Fact]
+    public void RenderToSvg_EdgeLabelsRenderedAfterNodes()
+    {
+        // Edge labels must be rendered AFTER nodes in the SVG output so that
+        // the white label background (fill="#fff") appears on top of node fills
+        // rather than being covered by them.
+        var renderer = new FlowchartRenderer();
+        var definition = """
+            flowchart LR
+                A[Source] -->|label| B[Destination]
+            """;
+
+        var result = renderer.RenderToSvg(definition);
+
+        // Find position of last node rect and first edge label rect.
+        // We use simple string searches (IndexOf / LastIndexOf) rather than regex
+        // to avoid any ReDoS risk when scanning the SVG output.
+        var lastNodePos = result.LastIndexOf("rx=\"4\"", StringComparison.Ordinal);
+        var firstLabelPos = result.IndexOf("stroke=\"#ccc\"", StringComparison.Ordinal);
+
+        Assert.True(lastNodePos >= 0, "No node rect found.");
+        Assert.True(firstLabelPos >= 0, "No edge label rect found.");
+        Assert.True(firstLabelPos > lastNodePos,
+            $"Edge label rect (pos {firstLabelPos}) must appear after last node rect (pos {lastNodePos}).");
+    }
+
+    [Fact]
+    public void RenderToSvg_XsltPipelineDiagram_BackslashAndLongLabelRenderedCorrectly()
+    {
+        // Full smoke test for the XSLT pipeline diagram from the issue:
+        // covers cylinder backslash text, long edge label wrapping, and node ordering.
+        var renderer = new FlowchartRenderer();
+        var definition = """
+            flowchart LR
+                DB[(SQL Server<br/>ERP Database)] -->|query| SRC[Database Source<br/>OpenOrders]
+                SRC -->|DataReader → DataSet → XML| XSLT[XSLT Conversion<br/>order-transform]
+                XSL[(orders-to-report.xslt<br/>C:\Stylesheets\)] -->|compiled| XSLT
+                PARAMS[Parameters<br/>companyid=acme<br/>date=20250115<br/>department=Finance<br/>report-title=Open Orders Report] -->|xsl:param| XSLT
+                XSLT -->|html output| FILE[acme_Orders_20250115.html]
+                FILE --> DEST[Folder Destination<br/>output\order-reports\]
+
+                style XSLT fill:#F5A623,color:#fff
+                style XSL fill:#F5A623,color:#fff
+                style DB fill:#4A90D9,color:#fff
+            """;
+
+        var result = renderer.RenderToSvg(definition);
+
+        Assert.Contains("<svg", result);
+        Assert.Contains("</svg>", result);
+        // Cylinders are rendered correctly.
+        Assert.Contains("<ellipse ", result);
+        // Backslashes in node text are escaped as XML entities.
+        Assert.Contains("&#92;", result);
+        Assert.DoesNotMatch(@"\\</text>", result);
+        // Long edge label is split (not one long line).
+        Assert.Contains("DataReader", result);
+        Assert.Contains("DataSet", result);
+        Assert.DoesNotContain(">DataReader → DataSet → XML<", result);
+        // Styles applied.
+        Assert.Contains("#F5A623", result);
+        Assert.Contains("#4A90D9", result);
+        // Other nodes present.
+        Assert.Contains("SQL Server", result);
+        Assert.Contains("ERP Database", result);
+        Assert.Contains("XSLT Conversion", result);
+        Assert.Contains("Folder Destination", result);
+        Assert.Contains("Parameters", result);
+    }
 }
