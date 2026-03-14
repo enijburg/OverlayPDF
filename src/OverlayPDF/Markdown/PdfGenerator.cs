@@ -90,7 +90,7 @@ public class PdfGenerator(IOptions<PdfOverlayOptions> options, MarkdownProcessor
             }
 
             // Copy named destinations (e.g. heading anchors for TOC links) from the content PDF
-            // to the output PDF.  CopyPagesTo copies page-level link annotations but does not
+            // to the output PDF. CopyPagesTo copies page-level link annotations but does not
             // propagate the document-level name tree, so GoTo actions would silently fail without this.
             //
             // Each named destination is a PdfArray whose first element is a reference to a page
