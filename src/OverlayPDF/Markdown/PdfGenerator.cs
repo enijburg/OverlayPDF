@@ -90,14 +90,44 @@ public class PdfGenerator(IOptions<PdfOverlayOptions> options, MarkdownProcessor
             }
 
             // Copy named destinations (e.g. heading anchors for TOC links) from the content PDF
-            // to the output PDF. CopyPagesTo copies page-level link annotations but does not
+            // to the output PDF.  CopyPagesTo copies page-level link annotations but does not
             // propagate the document-level name tree, so GoTo actions would silently fail without this.
+            //
+            // Each named destination is a PdfArray whose first element is a reference to a page
+            // object in the *source* document.  A plain CopyTo would duplicate that page object
+            // into the output instead of referencing the already-copied page, leaving the
+            // destination pointing at an orphan page that PDF viewers cannot navigate to.
+            // We therefore resolve each source page number and substitute the corresponding
+            // page object from the output document.
             var srcNames = contentPdfDoc.GetCatalog().GetNameTree(PdfName.Dests).GetNames();
             if (srcNames?.Count > 0)
             {
                 var dstNameTree = outputPdfDoc.GetCatalog().GetNameTree(PdfName.Dests);
                 foreach (var (key, value) in srcNames)
+                {
+                    if (value is PdfArray destArray && destArray.Size() >= 2)
+                    {
+                        var srcPageObj = destArray.Get(0);
+                        var srcPageNum = srcPageObj is PdfDictionary pageDict
+                            ? contentPdfDoc.GetPageNumber(pageDict)
+                            : 0;
+
+                        if (srcPageNum > 0 && srcPageNum <= outputPdfDoc.GetNumberOfPages())
+                        {
+                            // Build a new destination array that references the output page.
+                            var newDest = new PdfArray();
+                            newDest.Add(outputPdfDoc.GetPage(srcPageNum).GetPdfObject());
+                            for (var j = 1; j < destArray.Size(); j++)
+                                newDest.Add(destArray.Get(j).CopyTo(outputPdfDoc));
+
+                            dstNameTree.AddEntry(key, newDest);
+                            continue;
+                        }
+                    }
+
+                    // Fallback: copy as-is (should not normally be reached).
                     dstNameTree.AddEntry(key, value.CopyTo(outputPdfDoc));
+                }
 
                 logger.LogDebug("Copied {Count} named destination(s) to output PDF", srcNames.Count);
             }
