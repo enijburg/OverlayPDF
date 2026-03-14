@@ -1,5 +1,3 @@
-using System.Collections.Generic;
-using System.Linq;
 using System.Text;
 using iText.Html2pdf;
 using iText.Kernel.Geom;
@@ -153,7 +151,7 @@ public class PdfGenerator(IOptions<PdfOverlayOptions> options, MarkdownProcessor
             .Build();
         var html = Markdig.Markdown.ToHtml(markdown, pipeline);
 
-        // Apply CSS styling with configurable margins
+        // Apply CSS styling
         var fontFamily = _overlayOptions.DefaultFontFamily;
 
         // Convert points to pixels for CSS (1pt = 1.333px approximately, but we'll use pt directly in CSS)
@@ -211,7 +209,7 @@ public class PdfGenerator(IOptions<PdfOverlayOptions> options, MarkdownProcessor
                           }
 
                           th {
-                              background-color: #efefef;
+                              background-color: rgba(239, 239, 239, 0.25);
                               font-weight: bold;
                               padding: 8px;
                               border-bottom: 2px solid #cccccc;
@@ -226,13 +224,13 @@ public class PdfGenerator(IOptions<PdfOverlayOptions> options, MarkdownProcessor
 
                           /* Zebra striping � iText supports this only in this exact form */
                           tr.even td {
-                              background-color: #f7f7f7;
+                              background-color: rgba(247, 247, 247, 0.25);
                           }
 
                           /* Totals row � iText friendly */
                           .total-row td {
                               font-weight: bold;
-                              background-color: #f2f2f2;
+                              background-color: rgba(242, 242, 242, 0.25);
                               border-top: 2px solid #cccccc;
                               border-bottom: 2px solid #cccccc;
                           }
@@ -245,9 +243,9 @@ public class PdfGenerator(IOptions<PdfOverlayOptions> options, MarkdownProcessor
 
                           /* Code blocks */
                           pre {
-                              font-family: Courier, monospace;
+                              font-family: Consolas, "Courier New", monospace;
                               font-size: 9pt;
-                              background-color: #f5f5f5;
+                              background-color: rgba(245, 245, 245, 0.25);
                               border: 1px solid #e0e0e0;
                               padding: 8px 10px;
                               margin: 8px 0;
@@ -256,9 +254,9 @@ public class PdfGenerator(IOptions<PdfOverlayOptions> options, MarkdownProcessor
                           }
 
                           code {
-                              font-family: Courier, monospace;
+                              font-family: Consolas, "Courier New", monospace;
                               font-size: 9pt;
-                              background-color: #f5f5f5;
+                              background-color: rgba(245, 245, 245, 0.25);
                               padding: 1px 4px;
                           }
 

@@ -1,7 +1,8 @@
 {
   "profiles": {
     "OverlayPDF": {
-      "commandName": "Project"
+      "commandName": "Project",
+      "commandLineArgs": "\"C:\\git\\DataExtraction\\docs\\UserManual.md\" --no-template"
     }
   }
 }

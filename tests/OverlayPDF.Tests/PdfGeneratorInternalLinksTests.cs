@@ -1,5 +1,3 @@
-using System.Collections.Generic;
-using System.Linq;
 using iText.Kernel.Geom;
 using iText.Kernel.Pdf;
 using iText.Kernel.Pdf.Annot;
