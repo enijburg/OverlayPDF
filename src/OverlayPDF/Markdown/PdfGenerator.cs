@@ -66,16 +66,20 @@ public class PdfGenerator(IOptions<PdfOverlayOptions> options, MarkdownProcessor
             var firstTemplateXObject = initialTemplateDoc.GetPage(1).CopyAsFormXObject(outputPdfDoc);
             var contTemplateXObject = continuationTemplateDoc.GetPage(1).CopyAsFormXObject(outputPdfDoc);
 
-            // Process each page
+            // Copy ALL pages at once so iText can remap cross-page GoTo link
+            // annotations (e.g. TOC entries on page 1 that navigate to sections on
+            // later pages).  Copying page-by-page causes iText to silently drop
+            // GoTo annotations whose target page has not been copied yet.
+            contentPdfDoc.CopyPagesTo(1, totalContentPages, outputPdfDoc);
+
+            // Apply template backgrounds and page numbers to each copied page
             for (var i = 1; i <= totalContentPages; i++)
             {
                 var useFirstTemplate = i == 1;
                 var templateXObject = useFirstTemplate ? firstTemplateXObject : contTemplateXObject;
                 var appliedTemplatePath = useFirstTemplate ? firstTemplatePath : continuationTemplatePath;
 
-                // Copy the page from content PDF (preserves form fields)
-                contentPdfDoc.CopyPagesTo(i, i, outputPdfDoc);
-                var importedPage = outputPdfDoc.GetPage(outputPdfDoc.GetNumberOfPages());
+                var importedPage = outputPdfDoc.GetPage(i);
 
                 // Add template as background (before content)
                 var canvas = new PdfCanvas(importedPage.NewContentStreamBefore(), importedPage.GetResources(), outputPdfDoc);

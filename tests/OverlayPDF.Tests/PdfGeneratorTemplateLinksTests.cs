@@ -209,6 +209,101 @@ public class PdfGeneratorTemplateLinksTests
         }
     }
 
+    [Fact]
+    public void GeneratePdfFromMarkdownWithTemplates_CrossPageTocLinks_AllGoToAnnotationsPreserved()
+    {
+        // Regression test: when pages were copied one-by-one, iText silently dropped
+        // GoTo annotations whose target page had not yet been copied.  This caused
+        // cross-page TOC entries (e.g. TOC on page 1 linking to a section on page 3)
+        // to disappear from the output PDF.
+        var filler = string.Join("\n\n", Enumerable.Range(0, 20).Select(i =>
+            $"Lorem ipsum dolor sit amet paragraph {i}. " +
+            "This is filler text to make the document span multiple pages. " +
+            "The quick brown fox jumps over the lazy dog repeatedly."));
+
+        var markdown = $"""
+            # Document Title
+
+            ## Table of Contents
+
+            - [Introduction](#introduction)
+            - [Chapter One](#chapter-one)
+            - [Conclusion](#conclusion)
+
+            ## Introduction
+
+            This is the introduction section.
+
+            {filler}
+
+            ## Chapter One
+
+            This is chapter one.
+
+            {filler}
+
+            ## Conclusion
+
+            This is the conclusion.
+            """;
+
+        var (markdownPath, outputPdfPath, firstTpl, contTpl) = CreateTempPaths("tpl_crosspage");
+        File.WriteAllText(markdownPath, markdown);
+        CreateMinimalTemplatePdf(firstTpl);
+        CreateMinimalTemplatePdf(contTpl);
+
+        try
+        {
+            CreatePdfGenerator()
+                .GeneratePdfFromMarkdownWithTemplates(markdownPath, outputPdfPath, firstTpl, contTpl);
+
+            using var pdfDoc = new PdfDocument(new PdfReader(outputPdfPath));
+            var totalPages = pdfDoc.GetNumberOfPages();
+            Assert.True(totalPages >= 3,
+                $"PDF should have at least 3 pages to test cross-page links, but has {totalPages}");
+
+            // Collect all GoTo annotation destination names
+            var goToDestNames = new List<string>();
+            for (var i = 1; i <= totalPages; i++)
+            {
+                foreach (var annotation in pdfDoc.GetPage(i).GetAnnotations())
+                {
+                    if (annotation is not PdfLinkAnnotation link) continue;
+                    var action = link.GetAction();
+                    if (action is null || !PdfName.GoTo.Equals(action.Get(PdfName.S))) continue;
+
+                    var d = action.Get(PdfName.D);
+                    if (d is PdfString dStr)
+                        goToDestNames.Add(dStr.GetValue());
+                }
+            }
+
+            // All 3 TOC entries must have GoTo annotations — including cross-page ones
+            Assert.Contains("introduction", goToDestNames);
+            Assert.Contains("chapter-one", goToDestNames);
+            Assert.Contains("conclusion", goToDestNames);
+
+            // Verify that each GoTo destination resolves to a valid page via the name tree
+            var names = pdfDoc.GetCatalog().GetNameTree(PdfName.Dests).GetNames();
+            foreach (var destName in goToDestNames)
+            {
+                var matchingEntry = names.FirstOrDefault(n => n.Key.GetValue() == destName);
+                Assert.NotNull(matchingEntry.Value);
+                Assert.IsType<PdfArray>(matchingEntry.Value);
+                var destArray = (PdfArray)matchingEntry.Value;
+                var pageObj = destArray.Get(0);
+                Assert.IsType<PdfDictionary>(pageObj);
+                var pageNum = pdfDoc.GetPageNumber((PdfDictionary)pageObj);
+                Assert.True(pageNum >= 1 && pageNum <= totalPages,
+                    $"GoTo dest '{destName}' should resolve to a valid page (1–{totalPages}), but got {pageNum}");
+            }
+        }
+        finally
+        {
+            Cleanup(markdownPath, outputPdfPath, firstTpl, contTpl);
+        }
+    }
+
     // ── helpers ─────────────────────────────────────────────────────────────
 
     private static List<PdfOutline> CollectAllOutlines(PdfOutline root)
