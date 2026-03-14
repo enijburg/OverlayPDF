@@ -39,7 +39,7 @@ OverlayPDF merges your content PDFs with pre-designed template PDFs — applying
 
 It also converts Markdown files directly to PDF, complete with template overlays, and supports custom extensions for **timeline diagrams**, **signature blocks**, and **Mermaid flowcharts**.
 
-![PDF Overlay — content + template = branded output](https://github.com/user-attachments/assets/dc068f3e-cde4-473c-ae81-7765d1a40b55)
+![PDF Overlay: content plus template equals branded output](https://github.com/user-attachments/assets/dc068f3e-cde4-473c-ae81-7765d1a40b55)
 
 ## Key Features
 
