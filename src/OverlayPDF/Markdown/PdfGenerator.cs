@@ -116,7 +116,7 @@ public class PdfGenerator(IOptions<PdfOverlayOptions> options, MarkdownProcessor
                             ? contentPdfDoc.GetPageNumber(pageDict)
                             : 0;
 
-                        if (srcPageNum > 0 && srcPageNum <= outputPdfDoc.GetNumberOfPages())
+                        if (srcPageNum > 0 && srcPageNum <= totalContentPages)
                         {
                             // Build a new destination array that references the output page.
                             var newDest = new PdfArray();

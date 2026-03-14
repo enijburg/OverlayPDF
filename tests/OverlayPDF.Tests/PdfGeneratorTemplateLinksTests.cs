@@ -287,10 +287,11 @@ public class PdfGeneratorTemplateLinksTests
             var names = pdfDoc.GetCatalog().GetNameTree(PdfName.Dests).GetNames();
             foreach (var destName in goToDestNames)
             {
-                var matchingEntry = names.FirstOrDefault(n => n.Key.GetValue() == destName);
-                Assert.NotNull(matchingEntry.Value);
-                Assert.IsType<PdfArray>(matchingEntry.Value);
-                var destArray = (PdfArray)matchingEntry.Value;
+                var found = names.Any(n => n.Key.GetValue() == destName);
+                Assert.True(found, $"Named destination '{destName}' should exist in the name tree");
+                var matchingValue = names.First(n => n.Key.GetValue() == destName).Value;
+                Assert.IsType<PdfArray>(matchingValue);
+                var destArray = (PdfArray)matchingValue;
                 var pageObj = destArray.Get(0);
                 Assert.IsType<PdfDictionary>(pageObj);
                 var pageNum = pdfDoc.GetPageNumber((PdfDictionary)pageObj);
