@@ -66,16 +66,20 @@ public class PdfGenerator(IOptions<PdfOverlayOptions> options, MarkdownProcessor
             var firstTemplateXObject = initialTemplateDoc.GetPage(1).CopyAsFormXObject(outputPdfDoc);
             var contTemplateXObject = continuationTemplateDoc.GetPage(1).CopyAsFormXObject(outputPdfDoc);
 
-            // Process each page
+            // Copy ALL pages at once so iText can remap cross-page GoTo link
+            // annotations (e.g. TOC entries on page 1 that navigate to sections on
+            // later pages).  Copying page-by-page causes iText to silently drop
+            // GoTo annotations whose target page has not been copied yet.
+            contentPdfDoc.CopyPagesTo(1, totalContentPages, outputPdfDoc);
+
+            // Apply template backgrounds and page numbers to each copied page
             for (var i = 1; i <= totalContentPages; i++)
             {
                 var useFirstTemplate = i == 1;
                 var templateXObject = useFirstTemplate ? firstTemplateXObject : contTemplateXObject;
                 var appliedTemplatePath = useFirstTemplate ? firstTemplatePath : continuationTemplatePath;
 
-                // Copy the page from content PDF (preserves form fields)
-                contentPdfDoc.CopyPagesTo(i, i, outputPdfDoc);
-                var importedPage = outputPdfDoc.GetPage(outputPdfDoc.GetNumberOfPages());
+                var importedPage = outputPdfDoc.GetPage(i);
 
                 // Add template as background (before content)
                 var canvas = new PdfCanvas(importedPage.NewContentStreamBefore(), importedPage.GetResources(), outputPdfDoc);
@@ -92,12 +96,42 @@ public class PdfGenerator(IOptions<PdfOverlayOptions> options, MarkdownProcessor
             // Copy named destinations (e.g. heading anchors for TOC links) from the content PDF
             // to the output PDF. CopyPagesTo copies page-level link annotations but does not
             // propagate the document-level name tree, so GoTo actions would silently fail without this.
+            //
+            // Each named destination is a PdfArray whose first element is a reference to a page
+            // object in the *source* document.  A plain CopyTo would duplicate that page object
+            // into the output instead of referencing the already-copied page, leaving the
+            // destination pointing at an orphan page that PDF viewers cannot navigate to.
+            // We therefore resolve each source page number and substitute the corresponding
+            // page object from the output document.
             var srcNames = contentPdfDoc.GetCatalog().GetNameTree(PdfName.Dests).GetNames();
             if (srcNames?.Count > 0)
             {
                 var dstNameTree = outputPdfDoc.GetCatalog().GetNameTree(PdfName.Dests);
                 foreach (var (key, value) in srcNames)
+                {
+                    if (value is PdfArray destArray && destArray.Size() >= 2)
+                    {
+                        var srcPageObj = destArray.Get(0);
+                        var srcPageNum = srcPageObj is PdfDictionary pageDict
+                            ? contentPdfDoc.GetPageNumber(pageDict)
+                            : 0;
+
+                        if (srcPageNum > 0 && srcPageNum <= totalContentPages)
+                        {
+                            // Build a new destination array that references the output page.
+                            var newDest = new PdfArray();
+                            newDest.Add(outputPdfDoc.GetPage(srcPageNum).GetPdfObject());
+                            for (var j = 1; j < destArray.Size(); j++)
+                                newDest.Add(destArray.Get(j).CopyTo(outputPdfDoc));
+
+                            dstNameTree.AddEntry(key, newDest);
+                            continue;
+                        }
+                    }
+
+                    // Fallback: copy as-is (should not normally be reached).
                     dstNameTree.AddEntry(key, value.CopyTo(outputPdfDoc));
+                }
 
                 logger.LogDebug("Copied {Count} named destination(s) to output PDF", srcNames.Count);
             }
@@ -357,33 +391,48 @@ public class PdfGenerator(IOptions<PdfOverlayOptions> options, MarkdownProcessor
         HtmlConverter.ConvertToPdf(html, pdf, converterProperties);
         // pdf is now closed by HtmlConverter — named destinations exist in the file.
 
-        // Post-process: reopen the generated PDF and add bookmarks with explicit
-        // (page-based) destinations resolved from the populated names tree.
-        // Doing this after HtmlConverter ensures the names tree is fully populated,
-        // which is required to obtain correct page references for each heading.
-        if (headings.Count > 0)
-            AddOutlinesToExistingPdf(outputPdfPath, headings);
+        // Post-process: reopen the generated PDF to add bookmarks and/or page numbers.
+        // Both operations share a single stamping pass to avoid extra file I/O.
+        if (headings.Count > 0 || _overlayOptions.AddPageNumbers)
+            PostProcessPdf(outputPdfPath, headings);
     }
 
     /// <summary>
-    /// Reopens a finished PDF, adds bookmark (outline) entries whose destinations are
-    /// resolved from the document's names tree, and writes back to the same path.
+    /// Reopens a finished PDF in stamping mode to add bookmarks and/or page numbers,
+    /// then writes the result back to the same path.
     /// </summary>
-    private static void AddOutlinesToExistingPdf(string pdfPath,
+    private void PostProcessPdf(string pdfPath,
         IReadOnlyList<(int Level, string Text, string Id)> headings)
     {
-        var tmpPath = pdfPath + ".outlines_tmp";
+        var tmpPath = pdfPath + ".post_tmp";
         File.Move(pdfPath, tmpPath);
         try
         {
             using var reader = new PdfReader(tmpPath);
             using var writer = new PdfWriter(pdfPath);
             using var doc = new PdfDocument(reader, writer);
-            AddOutlines(doc, headings);
+
+            if (headings.Count > 0)
+            {
+                AddOutlines(doc, headings);
+                logger.LogDebug("Added {Count} outline entry/entries to PDF", headings.Count);
+            }
+
+            if (_overlayOptions.AddPageNumbers)
+            {
+                var totalPages = doc.GetNumberOfPages();
+                for (var i = 2; i <= totalPages; i++)
+                    PdfPageRenderer.AddPageNumber(doc, doc.GetPage(i), i,
+                        _overlayOptions.PageNumberAlignment,
+                        _overlayOptions.LeftMarginPoints,
+                        _overlayOptions.RightMarginPoints);
+
+                logger.LogDebug("Added page numbers to {Count} page(s)", totalPages - 1);
+            }
         }
         catch
         {
-            // Restore the original file if the post-processing step failed.
+            // Restore the original file if post-processing failed.
             if (!File.Exists(pdfPath))
                 File.Move(tmpPath, pdfPath);
             throw;

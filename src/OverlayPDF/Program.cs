@@ -38,18 +38,22 @@ if (noTemplate)
         ["InputFile"] = inputFile
     });
 
-    // Provide minimal defaults for options used during markdown rendering. Do not validate on start.
-    builder.Services.AddOptions<PdfOverlayOptions>().Configure(o =>
+    // Bind from PdfOverlayOptions:no_template when present so users can configure margins,
+    // font family, page numbers, etc. in appsettings.json without touching the code.
+    var noTemplateSection = builder.Configuration.GetSection($"{nameof(PdfOverlayOptions)}:no_template");
+    var optBuilder = builder.Services.AddOptions<PdfOverlayOptions>();
+    if (noTemplateSection.Exists())
+        optBuilder.Bind(noTemplateSection);
+
+    // Template-specific fields are unused in no-template mode; ensure they are non-null
+    // and supply a fallback font family when the config section was absent.
+    optBuilder.Configure(o =>
     {
-        o.DefaultFontFamily = "sans-serif";
         o.TemplateDirectory = string.Empty;
         o.FirstPageTemplate = string.Empty;
         o.ContinuationPageTemplate = string.Empty;
-        // When rendering without templates, ensure margins are zero so content fills the page
-        o.FirstPageTopMarginPoints = 0f;
-        o.FirstPageBottomMarginPoints = 0f;
-        o.ContinuationTopMarginPoints = 0f;
-        o.ContinuationBottomMarginPoints = 0f;
+        if (string.IsNullOrEmpty(o.DefaultFontFamily))
+            o.DefaultFontFamily = "sans-serif";
     });
 }
 else
