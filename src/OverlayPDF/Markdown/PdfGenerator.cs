@@ -391,33 +391,48 @@ public class PdfGenerator(IOptions<PdfOverlayOptions> options, MarkdownProcessor
         HtmlConverter.ConvertToPdf(html, pdf, converterProperties);
         // pdf is now closed by HtmlConverter — named destinations exist in the file.
 
-        // Post-process: reopen the generated PDF and add bookmarks with explicit
-        // (page-based) destinations resolved from the populated names tree.
-        // Doing this after HtmlConverter ensures the names tree is fully populated,
-        // which is required to obtain correct page references for each heading.
-        if (headings.Count > 0)
-            AddOutlinesToExistingPdf(outputPdfPath, headings);
+        // Post-process: reopen the generated PDF to add bookmarks and/or page numbers.
+        // Both operations share a single stamping pass to avoid extra file I/O.
+        if (headings.Count > 0 || _overlayOptions.AddPageNumbers)
+            PostProcessPdf(outputPdfPath, headings);
     }
 
     /// <summary>
-    /// Reopens a finished PDF, adds bookmark (outline) entries whose destinations are
-    /// resolved from the document's names tree, and writes back to the same path.
+    /// Reopens a finished PDF in stamping mode to add bookmarks and/or page numbers,
+    /// then writes the result back to the same path.
     /// </summary>
-    private static void AddOutlinesToExistingPdf(string pdfPath,
+    private void PostProcessPdf(string pdfPath,
         IReadOnlyList<(int Level, string Text, string Id)> headings)
     {
-        var tmpPath = pdfPath + ".outlines_tmp";
+        var tmpPath = pdfPath + ".post_tmp";
         File.Move(pdfPath, tmpPath);
         try
         {
             using var reader = new PdfReader(tmpPath);
             using var writer = new PdfWriter(pdfPath);
             using var doc = new PdfDocument(reader, writer);
-            AddOutlines(doc, headings);
+
+            if (headings.Count > 0)
+            {
+                AddOutlines(doc, headings);
+                logger.LogDebug("Added {Count} outline entry/entries to PDF", headings.Count);
+            }
+
+            if (_overlayOptions.AddPageNumbers)
+            {
+                var totalPages = doc.GetNumberOfPages();
+                for (var i = 2; i <= totalPages; i++)
+                    PdfPageRenderer.AddPageNumber(doc, doc.GetPage(i), i,
+                        _overlayOptions.PageNumberAlignment,
+                        _overlayOptions.LeftMarginPoints,
+                        _overlayOptions.RightMarginPoints);
+
+                logger.LogDebug("Added page numbers to {Count} page(s)", totalPages - 1);
+            }
         }
         catch
         {
-            // Restore the original file if the post-processing step failed.
+            // Restore the original file if post-processing failed.
             if (!File.Exists(pdfPath))
                 File.Move(tmpPath, pdfPath);
             throw;
